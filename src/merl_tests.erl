@@ -17,9 +17,9 @@ f(Ts) ->
 %%
 
 parse_error_test_() ->
-    [?_assertThrow(<<"parse error: {error,{0,erl_parse,", _/bytes>>,
-                       f(merl:quote(["{"])))
-     ].
+    [?_assertThrow({error, "1: syntax error before: '{'" ++ _},
+                   f(merl:quote(["{"])))
+    ].
 
 term_test() ->
     ?assertEqual(tuple, erl_syntax:type(merl:term({}))).

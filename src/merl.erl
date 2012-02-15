@@ -154,19 +154,31 @@ add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
 %% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
 %% TODO: only take lists of lines, or plain lines as well? splitting?
 
-%% TODO: not only line number, but full source position!
-
 %% @spec quote(TextLines::[iolist()]) -> [term()]
 %% @doc Parse lines of text and substitute meta-variables from environment.
 quote(TextLines) ->
     quote_at(1, TextLines).
 
-%% @spec quote_at(StartLine::integer(), TextLines::[iolist()]) -> [term()]
+%% @spec quote_at(StartPos::position(), TextLines::[iolist()]) -> [term()]
+%% @type position() :: integer() | {Line::integer(), Col::integer()}
 %% @see quote/1
-quote_at(StartLineNo, TextLines) ->
-    {ok, Ts, _} = erl_scan:string(flatten_lines(TextLines), StartLineNo),
-    parse_1(Ts).
+quote_at({Line, Col}, TextLines)
+  when is_integer(Line), is_integer(Col), Line > 0, Col > 0 ->
+    quote_at_1(Line, Col, TextLines);
+quote_at(StartPos, TextLines) when is_integer(StartPos), StartPos > 0 ->
+    quote_at_1(StartPos, undefined, TextLines).
 
+quote_at_1(StartLine, StartCol, TextLines) ->
+    %% be backwards compatible as far as R12, ignoring any starting column
+    StartPos = case erlang:system_info(version) of
+                   "5.6" ++ _ -> StartLine;
+                   "5.7" ++ _ -> StartLine;
+                   "5.8" ++ _ -> StartLine;
+                   _ when StartCol =:= undefined -> StartLine;
+                   _ -> {StartLine, StartCol}
+               end,
+    {ok, Ts, _} = erl_scan:string(flatten_lines(TextLines), StartPos),
+    parse_1(Ts).
 
 %% @spec quote(TextLines::[iolist()],
 %%             Env::[{Key::atom(),term()}]) -> [term()]
@@ -190,7 +202,6 @@ flatten_lines(TextLines) ->
 %% ------------------------------------------------------------------------
 %% Parsing code fragments
 
-%% TODO: avoid unnecessary backtracking (on average) where possible
 %% TODO: track longest partial parse, for better error reporting
 
 parse_1(Ts) ->
@@ -211,60 +222,64 @@ split_forms([T|Ts], Fs, As) ->
     split_forms(Ts, Fs, [T|As]);
 split_forms([], Fs, []) ->
     {ok, lists:reverse(Fs)};
-split_forms([], [], As) ->
+split_forms([], [], _) ->
     error;  % no dot tokens found - not representing form(s)
 split_forms([], _, [T|_]) ->
-    throw(format("parse error: incomplete form after ~p", [T])).
+    fail("incomplete form after ~p", [T]).
 
 parse_forms([Ts | Tss]) ->
     case erl_parse:parse_form(Ts) of
         {ok, Form} -> [Form | parse_forms(Tss)];
-        {error, Reason} ->
-            throw(format(erl_parse:format_error(Reason)))
+        {error, {_L,M,Reason}} ->
+            fail(M:format_error(Reason))
     end;
 parse_forms([]) ->
     [].
 
 parse_2(Ts) ->
-    %% single expression?
+    %% one or more comma-separated expressions?
+    %% (recall that Ts has no dot tokens if we get to this stage)
     case erl_parse:parse_exprs(Ts ++ [{dot,0}]) of
-        {ok, [Expr]} -> [Expr];
-        _ ->
-            parse_3(Ts ++ [{'end',0}, {dot,0}])
+        {ok, Exprs} -> Exprs;
+        {error, E} ->
+            parse_3(Ts ++ [{'end',0}, {dot,0}], [E])
     end.
 
-parse_3(Ts) ->
+parse_3(Ts, Es) ->
     %% try-clause or clauses?
     case erl_parse:parse_exprs([{'try',0}, {atom,0,true}, {'catch',0} | Ts]) of
         {ok, [{'try',_,_,_,_,_}=X]} ->
             %% get the right kind of qualifiers in the clause patterns
             erl_syntax:try_expr_handlers(X);
-        _ ->
-            parse_4(Ts)
+        {error, E} ->
+            parse_4(Ts, [E|Es])
     end.
 
-parse_4(Ts) ->
-    %% fun-clause or clauses? (`(a)' is also a pattern, but `(a,b)' isn't.)
+parse_4(Ts, Es) ->
+    %% fun-clause or clauses? (`(a)' is also a pattern, but `(a,b)' isn't,
+    %% so fun-clauses must be tried before normal case-clauses
     case erl_parse:parse_exprs([{'fun',0} | Ts]) of
         {ok, [{'fun',_,{clauses,Cs}}]} -> Cs;
-        _ ->
-            parse_5(Ts)
+        {error, E} ->
+            parse_5(Ts, [E|Es])
     end.
 
-parse_5(Ts) ->
+parse_5(Ts, Es) ->
     %% case-clause or clauses?
     case erl_parse:parse_exprs([{'case',0}, {atom,0,true}, {'of',0} | Ts]) of
         {ok, [{'case',_,_,Cs}]} -> Cs;
-        _ ->
-            parse_6(Ts)
-    end.
-
-parse_6(Ts) ->
-    %% comma-separated expressions?
-    case erl_parse:parse_exprs([{'begin',0} | Ts]) of
-        {ok, [{block,_,Es}]} -> Es;
-        {error, Reason} ->
-            throw(format(erl_parse:format_error(Reason)))
+        {error, E} ->
+            case lists:last(lists:sort([E|Es])) of
+                {L, M, R} when is_atom(M), is_integer(L), L > 0 ->
+                    fail("~w: ~s", [L, M:format_error(R)]);
+                {{L,C}, M, R} when is_atom(M), is_integer(L), is_integer(C),
+                                   L > 0, C > 0 ->
+                    fail("~w:~w: ~s", [L,C,M:format_error(R)]);
+                {_, M, R} when is_atom(M) ->
+                    fail(M:format_error(R));
+                R ->
+                    fail("unknown parse error: ~p", [R])
+            end
     end.
 
 %% ------------------------------------------------------------------------
@@ -301,7 +316,7 @@ metavariable(Node) ->
 template(Tree) ->
     case template_1(Tree) of
         {Kind,Name} when Kind =:= lift ; Kind =:= group ->
-            throw(format("bad metavariable: '~s'", [Name]));
+            fail("bad metavariable: '~s'", [Name]);
         Other -> Other
     end.
 
@@ -348,14 +363,14 @@ lift(Gs) ->
         [Name] ->
             {true, Name};
         Names ->
-            throw(format("clashing metavariables: ~w", [Names]))
+            fail("clashing metavariables: ~w", [Names])
     end.
 
 check_group(G) ->
     case [Name || {group,Name} <- G] of
         [] -> ok;
         Names ->
-            throw(format("misplaced group metavariable: ~w", [Names]))
+            fail("misplaced group metavariable: ~w", [Names])
     end.
 
 %% @doc Revert a template tree to a normal syntax tree. Any remaining
@@ -385,8 +400,8 @@ subst_1({node, Type, Attrs, Groups}, Env) ->
                        {Name, G1} when is_list(G1) ->
                            G1;
                        {Name, _} ->
-                           throw(format("value of group metavariable "
-                                        "must be a list: '~s'", [Name]));
+                           fail("value of group metavariable "
+                                "must be a list: '~s'", [Name]);
                        false -> {Name}
                    end;
                _ ->
@@ -415,8 +430,7 @@ match(Pattern, Tree) ->
 
 match_1({node, Type, _, Gs1}, {node, Type, _, Gs2}) ->
     lists:foldr(fun ({_, {Name}}, _Env) ->
-                        throw(format("metavariable in match source: '~s'",
-                                     [Name]));
+                        fail("metavariable in match source: '~s'", [Name]);
                     ({{Name}, G}, Env) ->
                         [{Name, G}] ++ Env;
                     ({G1, G2}, Env) ->
@@ -429,7 +443,7 @@ match_1({node, Type, _, Gs1}, {node, Type, _, Gs2}) ->
                 [],
                 zip_match(Gs1, Gs2));
 match_1(_, {Name}) ->
-    throw(format("metavariable in match source: '~s'", [Name]));
+    fail("metavariable in match source: '~s'", [Name]);
 match_1({Name}, T) ->
     [{Name, tree(T)}];
 match_1({node,_,_,_}, _) ->
@@ -459,9 +473,8 @@ zip_match(Xs, Ys) ->
 %% ------------------------------------------------------------------------
 %% Internal utility functions
 
-%% Format to binary-text
-format(Fs) ->
-    format(Fs, []).
+fail(Text) ->
+    fail(Text, []).
 
-format(Fs, As) ->
-    iolist_to_binary(io_lib:format(Fs, As)).
+fail(Fs, As) ->
+    throw({error, lists:flatten(io_lib:format(Fs, As))}).
