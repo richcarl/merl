@@ -7,10 +7,15 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-compile({parse_transform, merl}).
+
 %% utilities
 
 f(Ts) ->
     lists:flatmap(fun erl_prettypr:format/1, Ts).
+
+%g() ->
+%    {ok, merl:quote("foo:bar(42)")}.
 
 %%
 %% tests

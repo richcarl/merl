@@ -1,5 +1,5 @@
 # simple Makefile
-ERLC_FLAGS=
+ERLC_FLAGS=-pa ./ebin
 SOURCES=$(wildcard src/*.erl)
 HEADERS=$(wildcard src/*.hrl)
 OBJECTS=$(SOURCES:src/%.erl=ebin/%.beam)

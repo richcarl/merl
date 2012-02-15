@@ -15,9 +15,31 @@
 
 -include("../include/merl.hrl").
 
+-export([parse_transform/2]).
+
 %% TODO: simple text visualization of syntax trees, for debugging etc.
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
-%% TODO: make use of that parse transform for compile time evaluation
+
+
+%% ------------------------------------------------------------------------
+%% Parse transform for turning strings to templates at compile-time
+
+%% FIXME: this (and the matching) is not quite working
+
+parse_transform(Forms, _Options) ->
+    [P1] = ?Q(["merl:quote(_@text)"]),
+    %erlang:display({pattern, template(P1)}),
+    erl_syntax:revert_forms(
+      erl_syntax_lib:map(fun (T) -> transform(T, P1) end,
+                         erl_syntax:form_list(Forms))).
+
+transform(T, P1) ->
+    case match(P1, T) of
+        {ok, [{_, Text}]} ->
+            term(Text);
+        error ->
+            T
+    end.
 
 %% ------------------------------------------------------------------------
 %% Utility functions for commonly needed things
@@ -35,8 +57,6 @@ term(Term) ->
 
 %% ------------------------------------------------------------------------
 
-%% TODO: work on form_list trees
-
 %% @equiv compile(Code, [])
 compile(Code) ->
     compile(Code, []).
@@ -46,7 +66,10 @@ compile(Code) ->
 %% @see compile_and_load/2
 %% @see compile/1
 compile(Code, Options) when not is_list(Code)->
-    compile([Code], Options);
+    case erl_syntax:type(Code) of
+        form_list -> compile(erl_syntax:form_list_elements(Code));
+        _ -> compile([Code], Options)
+    end;
 compile(Code, Options0) when is_list(Options0) ->
     Forms = [erl_syntax:revert(F) || F <- Code],
     Options = [verbose, report_errors, report_warnings, binary | Options0],
@@ -421,9 +444,9 @@ match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
     lists:foldr(fun ({P, T}, Env) -> match(P, T) ++ Env end,
                 [], lists:zip(Patterns, Trees));
 match(Pattern, Tree) ->
-    try match_1(template(Pattern), template(Tree))
+    try {ok, match_1(template(Pattern), template(Tree))}
     catch
-        error -> []
+        error -> error
     end.
 
 match_1({node, Type, _, Gs1}, {node, Type, _, Gs2}) ->
