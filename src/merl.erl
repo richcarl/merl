@@ -202,8 +202,6 @@ flatten_lines(TextLines) ->
 %% ------------------------------------------------------------------------
 %% Parsing code fragments
 
-%% TODO: track longest partial parse, for better error reporting
-
 parse_1(Ts) ->
     %% if dot tokens are present, it is assumed that the text represents
     %% complete forms, not dot-terminated expressions or similar
