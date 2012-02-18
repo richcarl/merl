@@ -7,7 +7,7 @@
 
 -export([term/1, var/1, is_metavar/1]).
 
--export([quote/1, quote/2, quote_at/2, quote_at/3]).
+-export([quote/1, quote/2, qquote/2, qquote/3]).
 
 -export([template/1, subst/2, match/2]).
 
@@ -24,6 +24,13 @@
 %% TODO: lifting function that creates a fun that interprets the code
 
 -type tree() :: erl_syntax:syntaxTree().
+
+-type env() :: [{Key::atom(), tree()}].
+
+-type text() :: string() | [string()].
+
+-type location() :: erl_scan:location().
+
 
 %% ------------------------------------------------------------------------
 %% Parse transform for turning strings to templates at compile-time
@@ -100,27 +107,41 @@ is_metavar(Tree) ->
 %% TODO: only take lists of lines, or plain lines as well? splitting?
 
 
--spec quote(TextLines::[iolist()]) -> [term()].
+-spec qquote(Text::text(), Env::[{Key::atom(),term()}]) -> [term()].
 
-%% @doc Parse lines of text.
+%% @doc Parse text and substitute meta-variables from environment.
 
-quote(TextLines) ->
-    quote_at(1, TextLines).
+qquote(Text, Env) ->
+    qquote(1, Text, Env).
 
 
--spec quote_at(StartPos::position(), TextLines::[iolist()]) -> [term()].
+-spec qquote(StartPos::location(), Text::text(), Env::env()) -> [tree()].
 
--type position() :: integer() | {Line::integer(), Col::integer()}.
+%% @see quote/2
+
+qquote(StartPos, Text, Env) ->
+    lists:flatmap(fun (T) -> subst(T, Env) end, quote(StartPos, Text)).
+
+
+-spec quote(Text::text()) -> [tree()].
+
+%% @doc Parse text.
+
+quote(Text) ->
+    quote(1, Text).
+
+
+-spec quote(StartPos::location(), Text::text()) -> [tree()].
 
 %% @see quote/1
 
-quote_at({Line, Col}, TextLines)
+quote({Line, Col}, Text)
   when is_integer(Line), is_integer(Col), Line > 0, Col > 0 ->
-    quote_at_1(Line, Col, TextLines);
-quote_at(StartPos, TextLines) when is_integer(StartPos), StartPos > 0 ->
-    quote_at_1(StartPos, undefined, TextLines).
+    quote_1(Line, Col, Text);
+quote(StartPos, Text) when is_integer(StartPos), StartPos > 0 ->
+    quote_1(StartPos, undefined, Text).
 
-quote_at_1(StartLine, StartCol, TextLines) ->
+quote_1(StartLine, StartCol, Text) ->
     %% be backwards compatible as far as R12, ignoring any starting column
     StartPos = case erlang:system_info(version) of
                    "5.6" ++ _ -> StartLine;
@@ -129,32 +150,13 @@ quote_at_1(StartLine, StartCol, TextLines) ->
                    _ when StartCol =:= undefined -> StartLine;
                    _ -> {StartLine, StartCol}
                end,
-    {ok, Ts, _} = erl_scan:string(flatten_lines(TextLines), StartPos),
+    {ok, Ts, _} = erl_scan:string(flatten_text(Text), StartPos),
     parse_1(Ts).
 
-
--spec quote(TextLines::[iolist()], Env::[{Key::atom(),term()}]) -> [term()].
-
-%% @doc Parse lines of text and substitute meta-variables from environment.
-
-quote(TextLines, Env) ->
-    quote_at(1, TextLines, Env).
-
-
--spec quote_at(StartLine::integer(), TextLines::[iolist()],
-               Env::[{Key::atom(),term()}]) -> [term()].
-
-%% @see quote/2
-
-quote_at(StartLineNo, Text, Env) ->
-    lists:flatten([subst(T, Env) || T <- quote_at(StartLineNo, Text)]).
-
-flatten_lines(TextLines) ->
-    lists:foldr(fun(S, T) ->
-                        binary_to_list(iolist_to_binary(S)) ++ [$\n | T]
-                end,
-                "",
-                TextLines).
+flatten_text([L | _]=Lines) when is_list(L) ->
+    lists:foldr(fun(S, T) -> S ++ [$\n | T] end, "", Lines);
+flatten_text(Text) ->
+    Text.
 
 parse_1(Ts) ->
     %% if dot tokens are present, it is assumed that the text represents

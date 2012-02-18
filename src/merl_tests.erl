@@ -19,7 +19,7 @@ f(T) ->
     erl_prettypr:format(T).
 
 g() ->
-    {ok, ?Q(["foo:bar(42)"])}.
+    {ok, ?Q("foo:bar(42)")}.
 
 %%
 %% tests
@@ -27,7 +27,7 @@ g() ->
 
 parse_error_test_() ->
     [?_assertThrow({error, "1: syntax error before: '{'" ++ _},
-                   f(merl:quote(["{"])))
+                   f(merl:quote("{")))
     ].
 
 term_test_() ->
@@ -37,11 +37,11 @@ term_test_() ->
 
 quote_form_test_() ->
     [?_assertEqual("f(X) -> {ok, X}.",
-                   f(?Q(["f(X) -> {ok, X}."]))),
+                   f(?Q("f(X) -> {ok, X}."))),
      ?_assertEqual("-module(foo).",
-                   f(?Q(["-module(foo)."]))),
+                   f(?Q("-module(foo)."))),
      ?_assertEqual("-import(bar, [f/1, g/2]).",
-                   f(?Q(["-import(bar, [f/1, g/2])."]))),
+                   f(?Q("-import(bar, [f/1, g/2])."))),
      ?_assertEqual(("-module(foo)."
                     "-export([f/1])."
                     "f(X) -> {ok, X}."),
@@ -52,31 +52,31 @@ quote_form_test_() ->
 
 quote_term_test_() ->
     [?_assertEqual("foo",
-                   f(?Q(["foo"]))),
+                   f(?Q("foo"))),
      ?_assertEqual("42",
-                   f(?Q(["42"]))),
+                   f(?Q("42"))),
      ?_assertEqual("{foo, 42}",
-                   f(?Q(["{foo, 42}"]))),
-     ?_assertEqual(("1" "2" "3"),
-                   f(?Q(["1, 2, 3"]))),
+                   f(?Q("{foo, 42}"))),
+     ?_assertEqual(("1" ++ "2" ++ "3"),
+                   f(?Q("1, 2, 3"))),
      ?_assertEqual(("foo" "42" "{}" "true"),
-                   f(?Q(["foo, 42, {}, (true)"])))
+                   f(?Q("foo, 42, {}, (true)")))
     ].
 
 quote_expr_test_() ->
     [?_assertEqual("2 + 2",
-                   f(?Q(["2 + 2"]))),
+                   f(?Q("2 + 2"))),
      ?_assertEqual("f(foo, 42)",
-                   f(?Q(["f(foo, 42)"]))),
+                   f(?Q("f(foo, 42)"))),
      ?_assertEqual("case X of\n  a -> 1;\n  b -> 2\nend",
-                   f(?Q(["case X of a -> 1; b -> 2 end"]))),
-     ?_assertEqual(("2 + 2" "f(42)" "catch 22"),
-                   f(?Q(["2 + 2, f(42), catch 22"])))
+                   f(?Q("case X of a -> 1; b -> 2 end"))),
+     ?_assertEqual(("2 + 2" ++ "f(42)" ++ "catch 22"),
+                   f(?Q("2 + 2, f(42), catch 22")))
     ].
 
 quote_try_clause_test_() ->
     [?_assertEqual("(error:R) when R =/= foo -> ok",
-                   f(?Q(["error:R when R =/= foo -> ok"]))),
+                   f(?Q("error:R when R =/= foo -> ok"))),
      %% note that without any context, clauses are printed as fun-clauses
      ?_assertEqual(("(error:badarg) -> badarg"
                     "(exit:normal) -> normal"
@@ -88,7 +88,7 @@ quote_try_clause_test_() ->
 
 quote_fun_clause_test_() ->
     [?_assertEqual("(X, Y) when X < Y -> {ok, X}",
-                   f(?Q(["(X, Y) when X < Y -> {ok, X}"]))),
+                   f(?Q("(X, Y) when X < Y -> {ok, X}"))),
      ?_assertEqual(("(X, Y) when X < Y -> less"
                     "(X, Y) when X > Y -> greater"
                     "(_, _) -> equal"),
@@ -98,7 +98,7 @@ quote_fun_clause_test_() ->
 
 quote_case_clause_test_() ->
     [?_assertEqual("({X, Y}) when X < Y -> X",
-                   f(?Q(["{X, Y} when X < Y -> X"]))),
+                   f(?Q("{X, Y} when X < Y -> X"))),
      ?_assertEqual(("({X, Y}) when X < Y -> -1"
                     "({X, Y}) when X > Y -> 1"
                     "(_) -> 0"),
@@ -107,31 +107,31 @@ quote_case_clause_test_() ->
                          "_ -> 0"])))].
 
 subst_test_() ->
-    [?_assertEqual("42", f(merl:subst(merl:template(?Q(["_@foo"])),
+    [?_assertEqual("42", f(merl:subst(merl:template(?Q("_@foo")),
                                       [{foo, merl:term(42)}]))),
      ?_assertEqual("{42}",
-                   f(merl:subst(merl:template(?Q(["{_@foo}"])),
+                   f(merl:subst(merl:template(?Q("{_@foo}")),
                                 [{foo, merl:term(42)}]))),
      ?_assertEqual("{42}",
-                   f(merl:subst(merl:template(?Q(["{_@foo}"])),
+                   f(merl:subst(merl:template(?Q("{_@foo}")),
                                 [{foo, merl:term(42)}]))),
      ?_assertEqual("fun bar/0",
-                   f(merl:subst(merl:template(?Q(["fun '@foo'/0"])),
+                   f(merl:subst(merl:template(?Q("fun '@foo'/0")),
                                 [{foo, merl:term(bar)}]))),
      ?_assertEqual("fun foo/3",
-                   f(merl:subst(merl:template(?Q(["fun foo/9901"])),
+                   f(merl:subst(merl:template(?Q("fun foo/9901")),
                                 [{1, merl:term(3)}]))),
      ?_assertEqual("[42]",
-                   f(merl:subst(merl:template(?Q(["[_@foo]"])),
+                   f(merl:subst(merl:template(?Q("[_@foo]")),
                                 [{foo, merl:term(42)}]))),
      ?_assertEqual("[foo, bar]",
-                   f(merl:subst(merl:template(?Q(["[_@@foo]"])),
+                   f(merl:subst(merl:template(?Q("[_@@foo]")),
                                 [{foo, [merl:term(foo),merl:term(bar)]}]))),
      ?_assertEqual("foo",
-                   f(merl:subst(merl:template(?Q(["[_@_foo]"])),
+                   f(merl:subst(merl:template(?Q("[_@_foo]")),
                                 [{foo, merl:term(foo)}]))),
      ?_assertEqual("-export([foo/1, bar/2]).",
-                   f(merl:subst(merl:template(?Q(["-export(['@_@foo'/0])."])),
+                   f(merl:subst(merl:template(?Q("-export(['@_@foo'/0]).")),
                                 [{foo, [erl_syntax:arity_qualifier(
                                           merl:term(foo),
                                           merl:term(1)),
