@@ -21,6 +21,7 @@
 
 %% TODO: simple text visualization of syntax trees, for debugging etc.
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
+%% TODO: lifting function that creates a fun that interprets the code
 
 -type tree() :: erl_syntax:syntaxTree().
 
@@ -89,136 +90,30 @@ is_metavar(Tree) ->
         _ -> false
     end.
 
-%% ------------------------------------------------------------------------
-
-%% @equiv compile(Code, [])
-compile(Code) ->
-    compile(Code, []).
-
-%% @doc Compile a syntax tree or list of syntax trees representing a module
-%% into a binary BEAM object.
-%% @see compile_and_load/2
-%% @see compile/1
-compile(Code, Options) when not is_list(Code)->
-    case erl_syntax:type(Code) of
-        form_list -> compile(erl_syntax:form_list_elements(Code));
-        _ -> compile([Code], Options)
-    end;
-compile(Code, Options0) when is_list(Options0) ->
-    Forms = [erl_syntax:revert(F) || F <- Code],
-    Options = [verbose, report_errors, report_warnings, binary | Options0],
-    %% Note: modules compiled from forms will have a '.' as the last character
-    %% in the string given by proplists:get_value(source,
-    %% erlang:get_module_info(ModuleName, compile)).
-    compile:noenv_forms(Forms, Options).
-
-
-%% @equiv compile_and_load(Code, [])
-compile_and_load(Code) ->
-    compile_and_load(Code, []).
-
-%% @doc Compile a syntax tree or list of syntax trees representing a module
-%% and load the resulting module into memory.
-%% @see compile/2
-%% @see compile_and_load/1
-compile_and_load(Code, Options) ->
-    case compile(Code, Options) of
-        {ok, ModuleName, Binary} ->
-            code:load_binary(ModuleName, "", Binary),
-            {ok, Binary};
-        Other -> Other
-    end.
-
 
 %% ------------------------------------------------------------------------
-%% Making it simple to build a module
+%% Parsing and instantiating code fragments
 
--record(module, { name          :: atom()
-                , exports=[]    :: [{atom(), integer()}]
-                , imports=[]    :: [{atom(), [{atom(), integer()}]}]
-                , records=[]    :: [{atom(), [{atom(), term()}]}]
-                , attributes=[] :: [{atom(), [term()]}]
-                , functions=[]  :: [{atom(), {[term()],[term()],[term()]}}]
-                }).
-
-%% TODO: init module from a list of forms (from various sources)
-
-%% @doc Create a new module representation, using the given module name.
-init_module(Name) when is_atom(Name) ->
-    #module{name=Name}.
-
-%% TODO: setting current file (between forms)
-
-%% @doc Get the list of syntax tree forms for a module representation. This can
-%% be passed to compile/2.
-module_forms(#module{name=Name,
-                     exports=Xs,
-                     imports=Is,
-                     records=Rs,
-                     attributes=As,
-                     functions=Fs})
-  when is_atom(Name), Name =/= undefined ->
-    [Module] = ?Q(["-module('@name')."], [{name,term(Name)}]),
-    [Export] = ?Q(["-export(['@_@name'/1])."],
-                  [{name, [erl_syntax:arity_qualifier(term(N), term(A))
-                           || {N,A} <- ordsets:from_list(Xs)]}]),
-    Imports = lists:concat([?Q(["-import('@module', ['@_@name'/1])."],
-                               [{module,term(M)},
-                                {name,[erl_syntax:arity_qualifier(term(N),
-                                                                  term(A))
-                                       || {N,A} <- ordsets:from_list(Ns)]}])
-                            || {M, Ns} <- Is]),
-    Records = lists:concat([?Q(["-record('@name',{'@_@fields'})."],
-                               [{name,term(N)},
-                                {fields,[erl_syntax:record_field(term(F),
-                                                                 term(V))
-                                         || {F,V} <- Es]}])
-                            || {N,Es} <- lists:reverse(Rs)]),
-    Attrs = lists:concat([?Q(["-'@name'('@term')."],
-                             [{name,term(N)}, {term,term(T)}])
-                          || {N,T} <- lists:reverse(As)]),
-    [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
-
-%% @doc Add a function to a module representation.
-add_function(Exported, Name, Clauses, #module{exports=Xs, functions=Fs}=M)
-  when is_boolean(Exported), is_atom(Name), Clauses =/= [] ->
-    Arity = length(erl_syntax:clause_patterns(hd(Clauses))),
-    Xs1 = case Exported of
-              true -> [{Name,Arity} | Xs];
-              false -> Xs
-          end,
-    M#module{exports=Xs1,
-             functions=[erl_syntax:function(term(Name), Clauses) | Fs]}.
-
-%% @doc Add an import declaration to a module representation.
-add_import(From, Names, #module{imports=Is}=M)
-  when is_atom(From), is_list(Names) ->
-    M#module{imports=[{From, Names} | Is]}.
-
-%% @doc Add a record declaration to a module representation.
-add_record(Name, Fs, #module{records=Rs}=M) when is_atom(Name) ->
-    M#module{records=[{Name, Fs} | Rs]}.
-
-%% @doc Add a "wild" attribute, such as `-compile(Opts)' to a module
-%% representation. Note that such attributes can only have a single argument.
-add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
-    M#module{attributes=[{Name, Term} | As]}.
-
-
-%% ------------------------------------------------------------------------
 %% The quoting functions always return a list of one or more elements.
 
 %% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
 %% TODO: only take lists of lines, or plain lines as well? splitting?
 
-%% @spec quote(TextLines::[iolist()]) -> [term()]
+
+-spec quote(TextLines::[iolist()]) -> [term()].
+
 %% @doc Parse lines of text.
+
 quote(TextLines) ->
     quote_at(1, TextLines).
 
-%% @spec quote_at(StartPos::position(), TextLines::[iolist()]) -> [term()]
-%% @type position() :: integer() | {Line::integer(), Col::integer()}
+
+-spec quote_at(StartPos::position(), TextLines::[iolist()]) -> [term()].
+
+-type position() :: integer() | {Line::integer(), Col::integer()}.
+
 %% @see quote/1
+
 quote_at({Line, Col}, TextLines)
   when is_integer(Line), is_integer(Col), Line > 0, Col > 0 ->
     quote_at_1(Line, Col, TextLines);
@@ -237,15 +132,20 @@ quote_at_1(StartLine, StartCol, TextLines) ->
     {ok, Ts, _} = erl_scan:string(flatten_lines(TextLines), StartPos),
     parse_1(Ts).
 
-%% @spec quote(TextLines::[iolist()],
-%%             Env::[{Key::atom(),term()}]) -> [term()]
+
+-spec quote(TextLines::[iolist()], Env::[{Key::atom(),term()}]) -> [term()].
+
 %% @doc Parse lines of text and substitute meta-variables from environment.
+
 quote(TextLines, Env) ->
     quote_at(1, TextLines, Env).
 
-%% @spec quote_at(StartLine::integer(), TextLines::[iolist()],
-%%                Env::[{Key::atom(),term()}]) -> [term()]
+
+-spec quote_at(StartLine::integer(), TextLines::[iolist()],
+               Env::[{Key::atom(),term()}]) -> [term()].
+
 %% @see quote/2
+
 quote_at(StartLineNo, Text, Env) ->
     lists:flatten([subst(T, Env) || T <- quote_at(StartLineNo, Text)]).
 
@@ -255,9 +155,6 @@ flatten_lines(TextLines) ->
                 end,
                 "",
                 TextLines).
-
-%% ------------------------------------------------------------------------
-%% Parsing code fragments
 
 parse_1(Ts) ->
     %% if dot tokens are present, it is assumed that the text represents
@@ -337,7 +234,9 @@ parse_5(Ts, Es) ->
             end
     end.
 
+
 %% ------------------------------------------------------------------------
+%% Templates, substitution and matching
 
 %% @doc Turn a syntax tree into a template. Templates can be instantiated or
 %% matched against.
@@ -533,6 +432,124 @@ zip_match(Xs, Ys) ->
     catch
         error:function_clause -> throw(error)  % caught above
     end.
+
+
+%% ------------------------------------------------------------------------
+%% Compiling and loading code directly to memory
+
+%% @equiv compile(Code, [])
+compile(Code) ->
+    compile(Code, []).
+
+%% @doc Compile a syntax tree or list of syntax trees representing a module
+%% into a binary BEAM object.
+%% @see compile_and_load/2
+%% @see compile/1
+compile(Code, Options) when not is_list(Code)->
+    case erl_syntax:type(Code) of
+        form_list -> compile(erl_syntax:form_list_elements(Code));
+        _ -> compile([Code], Options)
+    end;
+compile(Code, Options0) when is_list(Options0) ->
+    Forms = [erl_syntax:revert(F) || F <- Code],
+    Options = [verbose, report_errors, report_warnings, binary | Options0],
+    %% Note: modules compiled from forms will have a '.' as the last character
+    %% in the string given by proplists:get_value(source,
+    %% erlang:get_module_info(ModuleName, compile)).
+    compile:noenv_forms(Forms, Options).
+
+
+%% @equiv compile_and_load(Code, [])
+compile_and_load(Code) ->
+    compile_and_load(Code, []).
+
+%% @doc Compile a syntax tree or list of syntax trees representing a module
+%% and load the resulting module into memory.
+%% @see compile/2
+%% @see compile_and_load/1
+compile_and_load(Code, Options) ->
+    case compile(Code, Options) of
+        {ok, ModuleName, Binary} ->
+            code:load_binary(ModuleName, "", Binary),
+            {ok, Binary};
+        Other -> Other
+    end.
+
+
+%% ------------------------------------------------------------------------
+%% Making it simple to build a module
+
+-record(module, { name          :: atom()
+                , exports=[]    :: [{atom(), integer()}]
+                , imports=[]    :: [{atom(), [{atom(), integer()}]}]
+                , records=[]    :: [{atom(), [{atom(), term()}]}]
+                , attributes=[] :: [{atom(), [term()]}]
+                , functions=[]  :: [{atom(), {[term()],[term()],[term()]}}]
+                }).
+
+%% TODO: init module from a list of forms (from various sources)
+
+%% @doc Create a new module representation, using the given module name.
+init_module(Name) when is_atom(Name) ->
+    #module{name=Name}.
+
+%% TODO: setting current file (between forms)
+
+%% @doc Get the list of syntax tree forms for a module representation. This can
+%% be passed to compile/2.
+module_forms(#module{name=Name,
+                     exports=Xs,
+                     imports=Is,
+                     records=Rs,
+                     attributes=As,
+                     functions=Fs})
+  when is_atom(Name), Name =/= undefined ->
+    [Module] = ?Q(["-module('@name')."], [{name,term(Name)}]),
+    [Export] = ?Q(["-export(['@_@name'/1])."],
+                  [{name, [erl_syntax:arity_qualifier(term(N), term(A))
+                           || {N,A} <- ordsets:from_list(Xs)]}]),
+    Imports = lists:concat([?Q(["-import('@module', ['@_@name'/1])."],
+                               [{module,term(M)},
+                                {name,[erl_syntax:arity_qualifier(term(N),
+                                                                  term(A))
+                                       || {N,A} <- ordsets:from_list(Ns)]}])
+                            || {M, Ns} <- Is]),
+    Records = lists:concat([?Q(["-record('@name',{'@_@fields'})."],
+                               [{name,term(N)},
+                                {fields,[erl_syntax:record_field(term(F),
+                                                                 term(V))
+                                         || {F,V} <- Es]}])
+                            || {N,Es} <- lists:reverse(Rs)]),
+    Attrs = lists:concat([?Q(["-'@name'('@term')."],
+                             [{name,term(N)}, {term,term(T)}])
+                          || {N,T} <- lists:reverse(As)]),
+    [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
+
+%% @doc Add a function to a module representation.
+add_function(Exported, Name, Clauses, #module{exports=Xs, functions=Fs}=M)
+  when is_boolean(Exported), is_atom(Name), Clauses =/= [] ->
+    Arity = length(erl_syntax:clause_patterns(hd(Clauses))),
+    Xs1 = case Exported of
+              true -> [{Name,Arity} | Xs];
+              false -> Xs
+          end,
+    M#module{exports=Xs1,
+             functions=[erl_syntax:function(term(Name), Clauses) | Fs]}.
+
+%% @doc Add an import declaration to a module representation.
+add_import(From, Names, #module{imports=Is}=M)
+  when is_atom(From), is_list(Names) ->
+    M#module{imports=[{From, Names} | Is]}.
+
+%% @doc Add a record declaration to a module representation.
+add_record(Name, Fs, #module{records=Rs}=M) when is_atom(Name) ->
+    M#module{records=[{Name, Fs} | Rs]}.
+
+%% @doc Add a "wild" attribute, such as `-compile(Opts)' to a module
+%% representation. Note that such attributes can only have a single argument.
+add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
+    M#module{attributes=[{Name, Term} | As]}.
+
 
 %% ------------------------------------------------------------------------
 %% Internal utility functions
