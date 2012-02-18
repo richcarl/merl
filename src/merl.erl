@@ -5,9 +5,11 @@
 
 -module(merl).
 
--export([term/1, var/1]).
+-export([term/1, var/1, is_metavar/1]).
 
--export([quote/1, quote/2, quote_at/2, quote_at/3, subst/2, match/2]).
+-export([quote/1, quote/2, quote_at/2, quote_at/3]).
+
+-export([template/1, subst/2, match/2]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
          add_import/3, add_attribute/3, compile/1, compile/2,
@@ -20,15 +22,16 @@
 %% TODO: simple text visualization of syntax trees, for debugging etc.
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
 
+-type tree() :: erl_syntax:syntaxTree().
 
 %% ------------------------------------------------------------------------
 %% Parse transform for turning strings to templates at compile-time
 
-%% FIXME: this (and the matching) is not quite working
+%% FIXME: this (and the matching) is not quite working, it seems
 
 parse_transform(Forms, _Options) ->
     [P1] = ?Q(["merl:quote(_@text)"]),
-    %erlang:display({pattern, template(P1)}),
+    erlang:display({pattern, template(P1)}),
     erl_syntax:revert_forms(
       erl_syntax_lib:map(fun (T) -> transform(T, P1) end,
                          erl_syntax:form_list(Forms))).
@@ -42,7 +45,7 @@ transform(T, P1) ->
     end.
 
 %% ------------------------------------------------------------------------
-%% Utility functions for commonly needed things
+%% Primitives and utility functions
 
 %% TODO: setting line numbers
 
@@ -54,6 +57,37 @@ var(Name) ->
 term(Term) ->
     erl_syntax:abstract(Term).
 
+-spec is_metavar(tree()) -> {true,string()} | false.
+
+%% @doc Check if a tree represents a metavariable. Metavariables are atoms
+%% starting with `@', variables starting with `_@', or integers starting
+%% with `990'. Following the prefix, one or more `_' or `0' characters may
+%% be used to indicate "lifting" of the variable one or more levels, and
+%% after that, a `@' or `9' character indicates a group metavariable rather
+%% than a node metavariable.
+is_metavar(Tree) ->
+    case erl_syntax:type(Tree) of
+        atom ->
+            case erl_syntax:atom_name(Tree) of
+                "@" ++ Cs when Cs =/= [] -> {true,Cs};
+                _ -> false
+            end;
+        variable ->
+            case erl_syntax:variable_literal(Tree) of
+                "_@" ++ Cs when Cs =/= [] -> {true,Cs};
+                _ -> false
+            end;
+        integer ->
+            case erl_syntax:integer_value(Tree) of
+                N when N >= 9900 ->
+                    case integer_to_list(N) of
+                        "990" ++ Cs -> {true,Cs};
+                        _ -> false
+                    end;
+                _ -> false
+            end;
+        _ -> false
+    end.
 
 %% ------------------------------------------------------------------------
 
@@ -125,16 +159,16 @@ module_forms(#module{name=Name,
                      functions=Fs})
   when is_atom(Name), Name =/= undefined ->
     [Module] = ?Q(["-module('@name')."], [{name,term(Name)}]),
-    [Export] = ?Q(["-export(['@@_name'/1])."],
+    [Export] = ?Q(["-export(['@_@name'/1])."],
                   [{name, [erl_syntax:arity_qualifier(term(N), term(A))
                            || {N,A} <- ordsets:from_list(Xs)]}]),
-    Imports = lists:concat([?Q(["-import('@module', ['@@_name'/1])."],
+    Imports = lists:concat([?Q(["-import('@module', ['@_@name'/1])."],
                                [{module,term(M)},
                                 {name,[erl_syntax:arity_qualifier(term(N),
                                                                   term(A))
                                        || {N,A} <- ordsets:from_list(Ns)]}])
                             || {M, Ns} <- Is]),
-    Records = lists:concat([?Q(["-record('@name',{'@@_fields'})."],
+    Records = lists:concat([?Q(["-record('@name',{'@_@fields'})."],
                                [{name,term(N)},
                                 {fields,[erl_syntax:record_field(term(F),
                                                                  term(V))
@@ -178,7 +212,7 @@ add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
 %% TODO: only take lists of lines, or plain lines as well? splitting?
 
 %% @spec quote(TextLines::[iolist()]) -> [term()]
-%% @doc Parse lines of text and substitute meta-variables from environment.
+%% @doc Parse lines of text.
 quote(TextLines) ->
     quote_at(1, TextLines).
 
@@ -305,36 +339,23 @@ parse_5(Ts, Es) ->
 
 %% ------------------------------------------------------------------------
 
-%% @doc Check for metavariables. These are atoms starting with `@',
-%% variables starting with `_@', or integers starting with `990'. After
-%% that, one or more `@' or `0' characters may be used to indicate "lifting"
-%% of the variable one or more levels, and after that, a `_' or `9'
-%% character indicates a group metavariable rather than a node metavariable.
-metavariable(Node) ->
-    case erl_syntax:type(Node) of
-        atom ->
-            case erl_syntax:atom_name(Node) of
-                "@" ++ Cs when Cs =/= [] -> {true,Cs};
-                _ -> false
-            end;
-        variable ->
-            case erl_syntax:variable_literal(Node) of
-                "_@" ++ Cs when Cs =/= [] -> {true,Cs};
-                _ -> false
-            end;
-        integer ->
-            case integer_to_list(erl_syntax:integer_value(Node)) of
-                "990" ++ Cs when Cs =/= [] -> {true,Cs};
-                _ -> false
-            end;
-        _ -> false
-    end.
+%% @doc Turn a syntax tree into a template. Templates can be instantiated or
+%% matched against.
+%% @see subst/2
+%% @see match/2
 
-%% @doc Make a template tree, where leaves are normal syntax trees (generally
-%% atomic), and inner nodes are tuples {node,Type,Attrs,Groups} where Groups
-%% are lists of lists of nodes. Metavariables are 1-tuples {Name}, where Name
-%% is an atom, and can exist both on the group level and the node level.
+%% TODO: more optimized template representation; keep ground subtrees intact
+
+%% Leaves are normal syntax trees (generally atomic), and inner nodes are
+%% tuples {node,Type,Attrs,Groups} where Groups are lists of lists of nodes.
+%% Metavariables are 1-tuples {Name}, where Name is an atom, and can exist
+%% both on the group level and the node level.
+template(Trees) when is_list(Trees) ->
+    [template_0(T) || T <- Trees];
 template(Tree) ->
+    template_0(Tree).
+
+template_0(Tree) ->
     case template_1(Tree) of
         {Kind,Name} when Kind =:= lift ; Kind =:= group ->
             fail("bad metavariable: '~s'", [Name]);
@@ -344,10 +365,10 @@ template(Tree) ->
 template_1(Tree) ->
     case erl_syntax:subtrees(Tree) of
         [] ->
-            case metavariable(Tree) of
-                {true,"@"++Cs} when Cs =/= [] -> {lift,Cs};
+            case is_metavar(Tree) of
+                {true,"_"++Cs} when Cs =/= [] -> {lift,Cs};
                 {true,"0"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"_"++Cs} when Cs =/= [] -> {group,Cs};
+                {true,"@"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,Cs} -> {tag(Cs)};
                 false -> Tree
@@ -359,9 +380,9 @@ template_1(Tree) ->
                    end
                    || G <- Gs],
             case lift(Gs1) of
-                {true,"@"++Cs} when Cs =/= [] -> {lift,Cs};
+                {true,"_"++Cs} when Cs =/= [] -> {lift,Cs};
                 {true,"0"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"_"++Cs} when Cs =/= [] -> {group,Cs};
+                {true,"@"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,Cs} -> {tag(Cs)};
                 _ ->
@@ -370,6 +391,21 @@ template_1(Tree) ->
             end
     end.
 
+%% TODO: should it be allowed to mix group metavars with other elements?
+
+%% group metavariables are only allowed as the only member of their group,
+%% so as to not quietly discard the other members
+
+%% FIXME: is this broken? only checks for multiple group metavars in group!
+
+check_group(G) ->
+    case [Name || {group,Name} <- G] of
+        [] -> ok;
+        Names ->
+            fail("misplaced group metavariable: ~w", [Names])
+    end.
+
+%% convert the remains of the name string back to an integer or atom
 tag(Name) ->
     try list_to_integer(Name)
     catch
@@ -377,6 +413,7 @@ tag(Name) ->
             list_to_atom(Name)
     end.
 
+%% allow a lifted metavariable in a subgroup to replace the entire node
 lift(Gs) ->
     case [Name || {lift,Name} <- lists:concat([G || G <- Gs, is_list(G)])] of
         [] ->
@@ -387,12 +424,6 @@ lift(Gs) ->
             fail("clashing metavariables: ~w", [Names])
     end.
 
-check_group(G) ->
-    case [Name || {group,Name} <- G] of
-        [] -> ok;
-        Names ->
-            fail("misplaced group metavariable: ~w", [Names])
-    end.
 
 %% @doc Revert a template tree to a normal syntax tree. Any remaining
 %% metavariables are turned into @-prefixed atoms.
@@ -410,8 +441,20 @@ tree({Var}) when is_atom(Var) ->
 tree(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
+
 %% @doc Substitute metavariables, both on group and node level.
+subst(Trees, Env) when is_list(Trees) ->
+    [subst_0(T, Env) || T <- Trees];
 subst(Tree, Env) ->
+    subst_0(Tree, Env).
+
+%% handle both trees and templates as input
+subst_0({node, _, _, _}=Template, Env) ->
+    tree(subst_1(Template, Env));
+subst_0({_}=Template, Env) ->
+    tree(subst_1(Template, Env));
+subst_0(Tree, Env) ->
+    %% TODO: can we do this faster instead of going via the template form?
     tree(subst_1(template(Tree), Env)).
 
 subst_1({node, Type, Attrs, Groups}, Env) ->
@@ -432,7 +475,7 @@ subst_1({node, Type, Attrs, Groups}, Env) ->
     {node, Type, Attrs, Gs1};
 subst_1({Name}, Env) ->
     case lists:keyfind(Name, 1, Env) of
-        {Name, NodeOrNodes} -> NodeOrNodes;
+        {Name, TreeOrTrees} -> TreeOrTrees;
         false -> {Name}
     end;
 subst_1(Leaf, _Env) ->
