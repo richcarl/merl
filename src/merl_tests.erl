@@ -19,7 +19,11 @@ f(T) ->
     erl_prettypr:format(T).
 
 g() ->
-    {ok, ?Q("foo:bar(42)")}.
+    {ok, merl:quote(?LINE, "42")}.
+
+
+ok({ok, X}) -> X.
+
 
 %%
 %% tests
@@ -119,7 +123,7 @@ subst_test_() ->
                    f(merl:subst(merl:template(?Q("fun '@foo'/0")),
                                 [{foo, merl:term(bar)}]))),
      ?_assertEqual("fun foo/3",
-                   f(merl:subst(merl:template(?Q("fun foo/9901")),
+                   f(merl:subst(merl:template(?Q("fun foo/9091")),
                                 [{1, merl:term(3)}]))),
      ?_assertEqual("[42]",
                    f(merl:subst(merl:template(?Q("[_@foo]")),
@@ -140,4 +144,33 @@ subst_test_() ->
                                           merl:term(2))
                                        ]}
                                 ])))
-     ].
+    ].
+
+match_test_() ->
+    [?_assertEqual("42",
+                   f(proplists:get_value(foo,
+                                         ok(merl:match(?Q("_@foo"),
+                                                       ?Q("42")))))),
+     ?_assertEqual("42",
+                   f(proplists:get_value(foo,
+                                         ok(merl:match(?Q("{_@foo}"),
+                                                       ?Q("{42}")))))),
+     ?_assertEqual("bar",
+                   f(proplists:get_value(foo,
+                                         ok(merl:match(?Q("fun '@foo'/9091"),
+                                                       ?Q("fun bar/0")))))),
+     ?_assertEqual("\"hello\"",
+                   f(proplists:get_value(text,
+                                         ok(merl:match(
+                                              ?Q("{_@line, _@text}"),
+                                              ?Q("{17, \"hello\"}"))
+                                           ))
+                    )),
+     ?_assertEqual("\"hello\"",
+                   f(proplists:get_value(text,
+                                         ok(merl:match(
+                                              ?Q("foo(_@line, _@text)"),
+                                              ?Q("foo(17, \"hello\")"))
+                                           ))
+                    ))
+    ].

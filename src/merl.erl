@@ -35,20 +35,40 @@
 %% ------------------------------------------------------------------------
 %% Parse transform for turning strings to templates at compile-time
 
+%% TODO: move out of merl module, apply to self at compile time
+
 %% FIXME: this (and the matching) is not quite working, it seems
 
+%% FIXME: handle partially constant calls; only the text needs to be constant
+
 parse_transform(Forms, _Options) ->
-    [P1] = ?Q(["merl:quote(_@text)"]),
-    erlang:display({pattern, template(P1)}),
+    P = template(hd(?Q("merl:_@function(_@@args)"))),
     erl_syntax:revert_forms(
-      erl_syntax_lib:map(fun (T) -> transform(T, P1) end,
+      erl_syntax_lib:map(fun (T) -> transform(T, P) end,
                          erl_syntax:form_list(Forms))).
 
-transform(T, P1) ->
-    case match(P1, T) of
-        {ok, [{_, Text}]} ->
-            term(Text);
-        error ->
+transform(T, P) ->
+    case match(P, T) of
+        {ok, [{args, As}, {function, {atom,_,A}=F}]}
+          when A =:= quote ; A =:= template ->
+            erlang:display({call,F,As}), %% REMOVE
+            case lists:all(fun erl_syntax:is_literal/1, [F|As]) of
+                true ->
+                    [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
+                    erlang:display({applying,F1,As1}),
+                    try apply(merl, F1, As1) of
+                        T1 ->
+                            erlang:display({result,T1}), % REMOVE
+                            term(T1)
+                    catch
+                        throw:_Reason ->
+                            erlang:display({error,_Reason}), % REMOVE
+                            T
+                    end;
+                false ->
+                    T
+            end;
+        _ ->
             T
     end.
 
@@ -67,9 +87,12 @@ term(Term) ->
 
 -spec is_metavar(tree()) -> {true,string()} | false.
 
+%% TODO: anonymous metavariables, not included in match result
+%% TODO: document that multiple occurrences of metavariables are not checked
+
 %% @doc Check if a tree represents a metavariable. Metavariables are atoms
 %% starting with `@', variables starting with `_@', or integers starting
-%% with `990'. Following the prefix, one or more `_' or `0' characters may
+%% with `909'. Following the prefix, one or more `_' or `0' characters may
 %% be used to indicate "lifting" of the variable one or more levels, and
 %% after that, a `@' or `9' character indicates a group metavariable rather
 %% than a node metavariable.
@@ -87,9 +110,9 @@ is_metavar(Tree) ->
             end;
         integer ->
             case erl_syntax:integer_value(Tree) of
-                N when N >= 9900 ->
+                N when N > 9090 ->
                     case integer_to_list(N) of
-                        "990" ++ Cs -> {true,Cs};
+                        "909" ++ Cs -> {true,Cs};
                         _ -> false
                     end;
                 _ -> false
@@ -327,11 +350,13 @@ lift(Gs) ->
 
 
 %% @doc Revert a template tree to a normal syntax tree. Any remaining
-%% metavariables are turned into @-prefixed atoms.
+%% metavariables are turned into @-prefixed atoms or 909-prefixed integers.
 tree({node, Type, Attrs, Groups}) ->
     Gs = [case G of
               {Var} when is_atom(Var) ->
-                  [erl_syntax:atom("@_"++atom_to_list(Var))];
+                  [erl_syntax:atom(tag("@@"++atom_to_list(Var)))];
+              {Var} when is_integer(Var) ->
+                  [erl_syntax:integer(tag("9099"++integer_to_list(Var)))];
               _ ->
                   [tree(T) || T <- G]
           end
@@ -339,6 +364,8 @@ tree({node, Type, Attrs, Groups}) ->
     erl_syntax:set_attrs(erl_syntax:make_tree(Type, Gs), Attrs);
 tree({Var}) when is_atom(Var) ->
     erl_syntax:atom("@"++atom_to_list(Var));
+tree({Var}) when is_integer(Var) ->
+    erl_syntax:integer(tag("909"++integer_to_list(Var)));
 tree(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
@@ -349,14 +376,14 @@ subst(Trees, Env) when is_list(Trees) ->
 subst(Tree, Env) ->
     subst_0(Tree, Env).
 
-%% handle both trees and templates as input
-subst_0({node, _, _, _}=Template, Env) ->
-    tree(subst_1(Template, Env));
-subst_0({_}=Template, Env) ->
-    tree(subst_1(Template, Env));
 subst_0(Tree, Env) ->
     %% TODO: can we do this faster instead of going via the template form?
-    tree(subst_1(template(Tree), Env)).
+    tree(subst_1(ensure_template(Tree), Env)).
+
+%% handle both trees and templates as input
+ensure_template({node, _, _, _}=Template) -> Template;
+ensure_template({_}=Template) -> Template;
+ensure_template(Tree) -> template(Tree).
 
 subst_1({node, Type, Attrs, Groups}, Env) ->
     Gs1 = [case G of
@@ -383,21 +410,41 @@ subst_1(Leaf, _Env) ->
     Leaf.
 
 %% Matches a pattern tree against a ground tree (or patterns against ground
-%% trees) returning an environment mapping variable names to subtrees
+%% trees) returning an environment mapping variable names to subtrees;
+%% the environment is always sorted on keys
+
+%% TODO: instead of sorting at the end, use an orddict accumulator
+
 match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
-    lists:foldr(fun ({P, T}, Env) -> match(P, T) ++ Env end,
-                [], lists:zip(Patterns, Trees));
+    try {ok, sort(lists:foldr(fun ({P, T}, Env) -> match_0(P, T) ++ Env end,
+                              [], lists:zip(Patterns, Trees)))}
+    catch
+        error -> error
+    end;
 match(Pattern, Tree) ->
-    try {ok, match_1(template(Pattern), template(Tree))}
+    try {ok, sort(match_0(Pattern, Tree))}
     catch
         error -> error
     end.
+
+sort(Env) ->
+    lists:keysort(1, Env).
+
+match_0(Pattern, Tree) ->
+    erlang:display({match,Pattern,Tree}),
+    T1 = ensure_template(Pattern),
+    T2 = ensure_template(Tree),
+    erlang:display({t1, T1}),
+    erlang:display({t2, T2}),
+    X = match_1(T1, T2),
+    erlang:display({out, X}),
+    X.
 
 match_1({node, Type, _, Gs1}, {node, Type, _, Gs2}) ->
     lists:foldr(fun ({_, {Name}}, _Env) ->
                         fail("metavariable in match source: '~s'", [Name]);
                     ({{Name}, G}, Env) ->
-                        [{Name, G}] ++ Env;
+                        [{Name, lists:map(fun tree/1, G)} | Env];
                     ({G1, G2}, Env) ->
                         lists:foldr(fun ({T1, T2}, E) ->
                                             match_1(T1, T2) ++ E
@@ -416,16 +463,43 @@ match_1({node,_,_,_}, _) ->
 match_1(_,{node,_,_,_}) ->
     throw(error);  % not a match (leaf vs. non-leaf), caught above
 match_1(L1, L2) ->
-    %% we need to create a normal form of the leaves in order to compare
-    %% them, so we have to reset the attributes of both leaf nodes
-    A = erl_syntax:get_attrs(erl_syntax:nil()),
-    %% all leaf nodes should be revertible (I think) - this will create a
-    %% unique normal form that can be compared
-    N1 = erl_syntax:revert(erl_syntax:set_attrs(L1, A)),
-    N2 = erl_syntax:revert(erl_syntax:set_attrs(L2, A)),
-    case N1 =:= N2 of
-        true -> [];
-        false -> throw(error)  % not a match, caught above
+    %% TODO: there should be a compare function in erl_syntax instead
+    T1 = erl_syntax:type(L1),
+    case erl_syntax:type(L2) of
+        T1 ->
+            case case T1 of
+                     atom ->
+                         erl_syntax:atom_value(L1)
+                             =:= erl_syntax:atom_value(L2);
+                     char ->
+                         erl_syntax:char_value(L1)
+                             =:= erl_syntax:char_value(L2);
+                     float ->
+                         erl_syntax:float_value(L1)
+                             =:= erl_syntax:float_value(L2);
+                     integer ->
+                         erl_syntax:integer_value(L1)
+                             =:= erl_syntax:integer_value(L2);
+                     string ->
+                         erl_syntax:string_value(L1)
+                             =:= erl_syntax:string_value(L2);
+                     operator ->
+                         erl_syntax:operator_name(L1)
+                             =:= erl_syntax:operator_name(L2);
+                     text ->
+                         erl_syntax:text_string(L1)
+                             =:= erl_syntax:text_string(L2);
+                     variable ->
+                         erl_syntax:variable_name(L1)
+                             =:= erl_syntax:variable_name(L2);
+                     _ ->
+                         true  % trivially equal nodes
+                 end of
+                true -> [];
+                false -> throw(error)  % not a match, caught above
+            end;
+        _T2 ->
+            throw(error)  % not a match (different types), caught above
     end.
 
 zip_match(Xs, Ys) ->
@@ -481,6 +555,8 @@ compile_and_load(Code, Options) ->
 %% ------------------------------------------------------------------------
 %% Making it simple to build a module
 
+%% TODO: put in separate module, apply transform
+
 -record(module, { name          :: atom()
                 , exports=[]    :: [{atom(), integer()}]
                 , imports=[]    :: [{atom(), [{atom(), integer()}]}]
@@ -506,23 +582,23 @@ module_forms(#module{name=Name,
                      attributes=As,
                      functions=Fs})
   when is_atom(Name), Name =/= undefined ->
-    [Module] = ?Q(["-module('@name')."], [{name,term(Name)}]),
-    [Export] = ?Q(["-export(['@_@name'/1])."],
+    [Module] = ?Q("-module('@name').", [{name,term(Name)}]),
+    [Export] = ?Q("-export(['@_@name'/1]).",
                   [{name, [erl_syntax:arity_qualifier(term(N), term(A))
                            || {N,A} <- ordsets:from_list(Xs)]}]),
-    Imports = lists:concat([?Q(["-import('@module', ['@_@name'/1])."],
+    Imports = lists:concat([?Q("-import('@module', ['@_@name'/1]).",
                                [{module,term(M)},
                                 {name,[erl_syntax:arity_qualifier(term(N),
                                                                   term(A))
                                        || {N,A} <- ordsets:from_list(Ns)]}])
                             || {M, Ns} <- Is]),
-    Records = lists:concat([?Q(["-record('@name',{'@_@fields'})."],
+    Records = lists:concat([?Q("-record('@name',{'@_@fields'}).",
                                [{name,term(N)},
                                 {fields,[erl_syntax:record_field(term(F),
                                                                  term(V))
                                          || {F,V} <- Es]}])
                             || {N,Es} <- lists:reverse(Rs)]),
-    Attrs = lists:concat([?Q(["-'@name'('@term')."],
+    Attrs = lists:concat([?Q("-'@name'('@term').",
                              [{name,term(N)}, {term,term(T)}])
                           || {N,T} <- lists:reverse(As)]),
     [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
