@@ -37,8 +37,6 @@
 
 %% TODO: move out of merl module, apply to self at compile time
 
-%% FIXME: this (and the matching) is not quite working, it seems
-
 %% FIXME: handle partially constant calls; only the text needs to be constant
 
 parse_transform(Forms, _Options) ->
@@ -51,25 +49,17 @@ transform(T, P) ->
     case match(P, T) of
         {ok, [{args, As}, {function, {atom,_,A}=F}]}
           when A =:= quote ; A =:= template ->
-            erlang:display({call,F,As}), %% REMOVE
             case lists:all(fun erl_syntax:is_literal/1, [F|As]) of
                 true ->
                     [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
-                    erlang:display({applying,F1,As1}),
                     try apply(merl, F1, As1) of
-                        T1 ->
-                            erlang:display({result,T1}), % REMOVE
-                            term(T1)
+                        T1 -> term(T1)
                     catch
-                        throw:_Reason ->
-                            erlang:display({error,_Reason}), % REMOVE
-                            T
+                        throw:_Reason -> T
                     end;
-                false ->
-                    T
+                false -> T
             end;
-        _ ->
-            T
+        _ -> T
     end.
 
 %% ------------------------------------------------------------------------
@@ -271,9 +261,9 @@ parse_5(Ts, Es) ->
 %% TODO: more optimized template representation; keep ground subtrees intact
 
 %% Leaves are normal syntax trees (generally atomic), and inner nodes are
-%% tuples {node,Type,Attrs,Groups} where Groups are lists of lists of nodes.
-%% Metavariables are 1-tuples {Name}, where Name is an atom, and can exist
-%% both on the group level and the node level.
+%% tuples {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
+%% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
+%% integer, and can exist both on the group level and the node level.
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
 template(Tree) ->
@@ -310,7 +300,7 @@ template_1(Tree) ->
                 {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,Cs} -> {tag(Cs)};
                 _ ->
-                    {node, erl_syntax:type(Tree),
+                    {template, erl_syntax:type(Tree),
                      erl_syntax:get_attrs(Tree), Gs1}
             end
     end.
@@ -351,7 +341,7 @@ lift(Gs) ->
 
 %% @doc Revert a template tree to a normal syntax tree. Any remaining
 %% metavariables are turned into @-prefixed atoms or 909-prefixed integers.
-tree({node, Type, Attrs, Groups}) ->
+tree({template, Type, Attrs, Groups}) ->
     Gs = [case G of
               {Var} when is_atom(Var) ->
                   [erl_syntax:atom(tag("@@"++atom_to_list(Var)))];
@@ -381,30 +371,30 @@ subst_0(Tree, Env) ->
     tree(subst_1(ensure_template(Tree), Env)).
 
 %% handle both trees and templates as input
-ensure_template({node, _, _, _}=Template) -> Template;
+ensure_template({template, _, _, _}=Template) -> Template;
 ensure_template({_}=Template) -> Template;
 ensure_template(Tree) -> template(Tree).
 
-subst_1({node, Type, Attrs, Groups}, Env) ->
+subst_1({template, Type, Attrs, Groups}, Env) ->
     Gs1 = [case G of
-               {Name} ->
-                   case lists:keyfind(Name, 1, Env) of
-                       {Name, G1} when is_list(G1) ->
+               {Var} ->
+                   case lists:keyfind(Var, 1, Env) of
+                       {Var, G1} when is_list(G1) ->
                            G1;
-                       {Name, _} ->
+                       {Var, _} ->
                            fail("value of group metavariable "
-                                "must be a list: '~s'", [Name]);
-                       false -> {Name}
+                                "must be a list: '~s'", [Var]);
+                       false -> {Var}
                    end;
                _ ->
                    lists:flatten([subst_1(T, Env) || T <- G])
            end
            || G <- Groups],
-    {node, Type, Attrs, Gs1};
-subst_1({Name}, Env) ->
-    case lists:keyfind(Name, 1, Env) of
-        {Name, TreeOrTrees} -> TreeOrTrees;
-        false -> {Name}
+    {template, Type, Attrs, Gs1};
+subst_1({Var}, Env) ->
+    case lists:keyfind(Var, 1, Env) of
+        {Var, TreeOrTrees} -> TreeOrTrees;
+        false -> {Var}
     end;
 subst_1(Leaf, _Env) ->
     Leaf.
@@ -431,82 +421,109 @@ sort(Env) ->
     lists:keysort(1, Env).
 
 match_0(Pattern, Tree) ->
-    erlang:display({match,Pattern,Tree}),
-    T1 = ensure_template(Pattern),
-    T2 = ensure_template(Tree),
-    erlang:display({t1, T1}),
-    erlang:display({t2, T2}),
-    X = match_1(T1, T2),
-    erlang:display({out, X}),
-    X.
+    match_template(ensure_template(Pattern), Tree).
 
-match_1({node, Type, _, Gs1}, {node, Type, _, Gs2}) ->
-    lists:foldr(fun ({_, {Name}}, _Env) ->
-                        fail("metavariable in match source: '~s'", [Name]);
-                    ({{Name}, G}, Env) ->
-                        [{Name, lists:map(fun tree/1, G)} | Env];
-                    ({G1, G2}, Env) ->
-                        lists:foldr(fun ({T1, T2}, E) ->
-                                            match_1(T1, T2) ++ E
-                                    end,
-                                    [],
-                                    zip_match(G1, G2)) ++ Env
-                end,
-                [],
-                zip_match(Gs1, Gs2));
-match_1(_, {Name}) ->
-    fail("metavariable in match source: '~s'", [Name]);
-match_1({Name}, T) ->
-    [{Name, tree(T)}];
-match_1({node,_,_,_}, _) ->
-    throw(error);  % not a match (non-leaf vs leaf), caught above
-match_1(_,{node,_,_,_}) ->
-    throw(error);  % not a match (leaf vs. non-leaf), caught above
-match_1(L1, L2) ->
-    %% TODO: there should be a compare function in erl_syntax instead
-    T1 = erl_syntax:type(L1),
-    case erl_syntax:type(L2) of
-        T1 ->
-            case case T1 of
-                     atom ->
-                         erl_syntax:atom_value(L1)
-                             =:= erl_syntax:atom_value(L2);
-                     char ->
-                         erl_syntax:char_value(L1)
-                             =:= erl_syntax:char_value(L2);
-                     float ->
-                         erl_syntax:float_value(L1)
-                             =:= erl_syntax:float_value(L2);
-                     integer ->
-                         erl_syntax:integer_value(L1)
-                             =:= erl_syntax:integer_value(L2);
-                     string ->
-                         erl_syntax:string_value(L1)
-                             =:= erl_syntax:string_value(L2);
-                     operator ->
-                         erl_syntax:operator_name(L1)
-                             =:= erl_syntax:operator_name(L2);
-                     text ->
-                         erl_syntax:text_string(L1)
-                             =:= erl_syntax:text_string(L2);
-                     variable ->
-                         erl_syntax:variable_name(L1)
-                             =:= erl_syntax:variable_name(L2);
-                     _ ->
-                         true  % trivially equal nodes
-                 end of
-                true -> [];
-                false -> throw(error)  % not a match, caught above
+%% match a template against a syntax tree
+match_template({template, Type, _, Gs}, Tree) ->
+    case erl_syntax:type(Tree) of
+        Type ->
+            match_template_1(Gs, erl_syntax:subtrees(Tree));
+        _ ->
+            throw(error)  % type mismatch
+    end;
+match_template({Var}, Tree) ->
+    [{Var, Tree}];
+match_template({template,_,_,_}, _Tree) ->
+    throw(error);  % non-leaf vs leaf
+match_template(Tree1, Tree2) ->
+    %% if Tree1 is not a template, Tree1 and Tree2 are both syntax trees
+    match_trees(Tree1, Tree2).
+
+match_template_1([{Var} | Gs1], [Group | Gs2]) ->
+    [{Var, Group}] ++ match_template_1(Gs1, Gs2);
+match_template_1([G1 | Gs1], [G2 | Gs2]) ->
+    match_template_2(G1, G2) ++ match_template_1(Gs1, Gs2);
+match_template_1([], []) ->
+    [];
+match_template_1(_, _) ->
+    throw(error).  % shape mismatch
+
+match_template_2([{Var} | Ts1], [Tree | Ts2]) ->
+    [{Var, Tree}] ++ match_template_2(Ts1, Ts2);
+match_template_2([T1 | Ts1], [T2 | Ts2]) ->
+    match_template(T1, T2) ++ match_template_2(Ts1, Ts2);
+match_template_2([], []) ->
+    [];
+match_template_2(_, _) ->
+    throw(error).  % shape mismatch
+
+%% match two syntax trees, ignoring metavariables on either side
+match_trees(T1, T2) ->
+    Type1 = erl_syntax:type(T1),
+    case erl_syntax:type(T2) of
+        Type1 ->
+            case erl_syntax:subtrees(T1) of
+                [] ->
+                    case erl_syntax:subtrees(T2) of
+                        [] ->
+                            case compare_leaves(Type1, T1, T2) of
+                                true -> [];
+                                false -> throw(error)  % different leaves
+                            end;
+                        Gs2 -> throw(error)  % shape mismatch
+                    end;
+                Gs1 ->
+                    case erl_syntax:subtrees(T2) of
+                        [] -> throw(error);  % shape mismatch
+                        Gs2 -> match_trees_1(Gs1, Gs2)
+                    end
             end;
-        _T2 ->
-            throw(error)  % not a match (different types), caught above
+        _Type2 ->
+            throw(error)  % different tree types
     end.
 
-zip_match(Xs, Ys) ->
-    %% turn zip length mismatch into a thrown error
-    try lists:zip(Xs, Ys)
-    catch
-        error:function_clause -> throw(error)  % caught above
+match_trees_1([G1 | Gs1], [G2 | Gs2]) ->
+    match_trees_2(G1, G2) ++ match_trees_1(Gs1, Gs2);
+match_trees_1([], []) ->
+    [];
+match_trees_1(_, _) ->
+    throw(error).  % shape mismatch
+
+match_trees_2([T1 | Ts1], [T2 | Ts2]) ->
+    match_trees(T1, T2) ++ match_trees_2(Ts1, Ts2);
+match_trees_2([], []) ->
+    [];
+match_trees_2(_, _) ->
+    throw(error).  % shape mismatch
+
+compare_leaves(Type, T1, T2) ->
+    case Type of
+        atom ->
+            erl_syntax:atom_value(T1)
+                =:= erl_syntax:atom_value(T2);
+        char ->
+            erl_syntax:char_value(T1)
+                =:= erl_syntax:char_value(T2);
+        float ->
+            erl_syntax:float_value(T1)
+                =:= erl_syntax:float_value(T2);
+        integer ->
+            erl_syntax:integer_value(T1)
+                =:= erl_syntax:integer_value(T2);
+        string ->
+            erl_syntax:string_value(T1)
+                =:= erl_syntax:string_value(T2);
+        operator ->
+            erl_syntax:operator_name(T1)
+                =:= erl_syntax:operator_name(T2);
+        text ->
+            erl_syntax:text_string(T1)
+                =:= erl_syntax:text_string(T2);
+        variable ->
+            erl_syntax:variable_name(T1)
+                =:= erl_syntax:variable_name(T2);
+        _ ->
+            true  % trivially equal nodes
     end.
 
 

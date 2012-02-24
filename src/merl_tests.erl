@@ -147,7 +147,13 @@ subst_test_() ->
     ].
 
 match_test_() ->
-    [?_assertEqual("42",
+    [?_assertEqual({ok, []}, merl:match(?Q("foo"), ?Q("foo"))),
+     ?_assertEqual(error,    merl:match(?Q("foo"), ?Q("bar"))),
+     ?_assertEqual({ok,[]},  merl:match(?Q("{foo,42}"), ?Q("{foo,42}"))),
+     ?_assertEqual(error,    merl:match(?Q("{foo,42}"), ?Q("{foo,bar}"))),
+     ?_assertEqual({ok,[]},  merl:match(?Q("[foo,[42]]"), ?Q("[foo,[42]]"))),
+     ?_assertEqual(error,    merl:match(?Q("[foo,[42]]"), ?Q("[foo,{42}]"))),
+     ?_assertEqual("42",
                    f(proplists:get_value(foo,
                                          ok(merl:match(?Q("_@foo"),
                                                        ?Q("42")))))),
