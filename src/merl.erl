@@ -77,7 +77,7 @@ term(Term) ->
 
 -spec is_metavar(tree()) -> {true,string()} | false.
 
-%% TODO: anonymous metavariables, not included in match result
+%% TODO: anonymous catch-all metavariables, not included in match result
 %% TODO: document that multiple occurrences of metavariables are not checked
 
 %% @doc Check if a tree represents a metavariable. Metavariables are atoms
@@ -236,6 +236,7 @@ parse_5(Ts, Es) ->
     case erl_parse:parse_exprs([{'case',0}, {atom,0,true}, {'of',0} | Ts]) of
         {ok, [{'case',_,_,Cs}]} -> Cs;
         {error, E} ->
+            %% select the best error to report
             case lists:last(lists:sort([E|Es])) of
                 {L, M, R} when is_atom(M), is_integer(L), L > 0 ->
                     fail("~w: ~s", [L, M:format_error(R)]);
@@ -403,98 +404,88 @@ subst_1(Leaf, _Env) ->
 %% trees) returning an environment mapping variable names to subtrees;
 %% the environment is always sorted on keys
 
-%% TODO: instead of sorting at the end, use an orddict accumulator
-
 match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
-    try {ok, sort(lists:foldr(fun ({P, T}, Env) -> match_0(P, T) ++ Env end,
-                              [], lists:zip(Patterns, Trees)))}
+    try {ok, lists:foldr(fun ({P, T}, Env) -> match_0(P, T) ++ Env end,
+                         [], lists:zip(Patterns, Trees))}
     catch
         error -> error
     end;
 match(Pattern, Tree) ->
-    try {ok, sort(match_0(Pattern, Tree))}
+    try {ok, match_0(Pattern, Tree)}
     catch
         error -> error
     end.
 
-sort(Env) ->
-    lists:keysort(1, Env).
-
 match_0(Pattern, Tree) ->
-    match_template(ensure_template(Pattern), Tree).
+    match_template(ensure_template(Pattern), Tree, []).
 
 %% match a template against a syntax tree
-match_template({template, Type, _, Gs}, Tree) ->
+match_template({template, Type, _, Gs}, Tree, Dict) ->
     case erl_syntax:type(Tree) of
-        Type ->
-            match_template_1(Gs, erl_syntax:subtrees(Tree));
-        _ ->
-            throw(error)  % type mismatch
+        Type -> match_template_1(Gs, erl_syntax:subtrees(Tree), Dict);
+        _ -> throw(error)  % type mismatch
     end;
-match_template({Var}, Tree) ->
-    [{Var, Tree}];
-match_template({template,_,_,_}, _Tree) ->
-    throw(error);  % non-leaf vs leaf
-match_template(Tree1, Tree2) ->
+match_template({Var}, Tree, Dict) ->
+    orddict:store(Var, Tree, Dict);
+match_template(Tree1, Tree2, Dict) ->
     %% if Tree1 is not a template, Tree1 and Tree2 are both syntax trees
-    match_trees(Tree1, Tree2).
+    case compare_trees(Tree1, Tree2) of
+        true -> Dict;
+        false -> throw(error)  % different trees
+    end.
 
-match_template_1([{Var} | Gs1], [Group | Gs2]) ->
-    [{Var, Group}] ++ match_template_1(Gs1, Gs2);
-match_template_1([G1 | Gs1], [G2 | Gs2]) ->
-    match_template_2(G1, G2) ++ match_template_1(Gs1, Gs2);
-match_template_1([], []) ->
-    [];
-match_template_1(_, _) ->
+match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
+    match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
+match_template_1([G1 | Gs1], [G2 | Gs2], Dict) ->
+    match_template_2(G1, G2, match_template_1(Gs1, Gs2, Dict));
+match_template_1([], [], Dict) ->
+    Dict;
+match_template_1(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
-match_template_2([{Var} | Ts1], [Tree | Ts2]) ->
-    [{Var, Tree}] ++ match_template_2(Ts1, Ts2);
-match_template_2([T1 | Ts1], [T2 | Ts2]) ->
-    match_template(T1, T2) ++ match_template_2(Ts1, Ts2);
-match_template_2([], []) ->
-    [];
-match_template_2(_, _) ->
+match_template_2([{Var} | Ts1], [Tree | Ts2], Dict) ->
+    match_template_2(Ts1, Ts2, orddict:store(Var, Tree, Dict));
+match_template_2([T1 | Ts1], [T2 | Ts2], Dict) ->
+    match_template_2(Ts1, Ts2, match_template(T1, T2, Dict));
+match_template_2([], [], Dict) ->
+    Dict;
+match_template_2(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
 %% match two syntax trees, ignoring metavariables on either side
-match_trees(T1, T2) ->
+compare_trees(T1, T2) ->
     Type1 = erl_syntax:type(T1),
     case erl_syntax:type(T2) of
         Type1 ->
             case erl_syntax:subtrees(T1) of
                 [] ->
                     case erl_syntax:subtrees(T2) of
-                        [] ->
-                            case compare_leaves(Type1, T1, T2) of
-                                true -> [];
-                                false -> throw(error)  % different leaves
-                            end;
-                        Gs2 -> throw(error)  % shape mismatch
+                        [] -> compare_leaves(Type1, T1, T2);
+                        _Gs2 -> false  % shape mismatch
                     end;
                 Gs1 ->
                     case erl_syntax:subtrees(T2) of
-                        [] -> throw(error);  % shape mismatch
-                        Gs2 -> match_trees_1(Gs1, Gs2)
+                        [] -> false;  % shape mismatch
+                        Gs2 -> compare_trees_1(Gs1, Gs2)
                     end
             end;
         _Type2 ->
-            throw(error)  % different tree types
+            false  % different tree types
     end.
 
-match_trees_1([G1 | Gs1], [G2 | Gs2]) ->
-    match_trees_2(G1, G2) ++ match_trees_1(Gs1, Gs2);
-match_trees_1([], []) ->
-    [];
-match_trees_1(_, _) ->
-    throw(error).  % shape mismatch
+compare_trees_1([G1 | Gs1], [G2 | Gs2]) ->
+    compare_trees_2(G1, G2) andalso compare_trees_1(Gs1, Gs2);
+compare_trees_1([], []) ->
+    true;
+compare_trees_1(_, _) ->
+    false.  % shape mismatch
 
-match_trees_2([T1 | Ts1], [T2 | Ts2]) ->
-    match_trees(T1, T2) ++ match_trees_2(Ts1, Ts2);
-match_trees_2([], []) ->
-    [];
-match_trees_2(_, _) ->
-    throw(error).  % shape mismatch
+compare_trees_2([T1 | Ts1], [T2 | Ts2]) ->
+    compare_trees(T1, T2) andalso compare_trees_2(Ts1, Ts2);
+compare_trees_2([], []) ->
+    true;
+compare_trees_2(_, _) ->
+    false.  % shape mismatch
 
 compare_leaves(Type, T1, T2) ->
     case Type of

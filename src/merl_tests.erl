@@ -18,7 +18,8 @@ f(Ts) when is_list(Ts) ->
 f(T) ->
     erl_prettypr:format(T).
 
-g() ->
+g_exported_() ->
+    %% for testing the parse transform, autoexported to avoid complaints
     {ok, merl:quote(?LINE, "42")}.
 
 
