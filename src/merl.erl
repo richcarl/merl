@@ -12,16 +12,15 @@
 -export([template/1, subst/2, match/2]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
-         add_import/3, add_attribute/3, compile/1, compile/2,
-         compile_and_load/1, compile_and_load/2]).
+         add_import/3, add_attribute/3]).
+
+-export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
 -include("../include/merl.hrl").
 
--export([parse_transform/2]).
-
-%% TODO: simple text visualization of syntax trees, for debugging etc.
+%% TODO: simple text visualization of syntax trees, for debugging etc.?
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
-%% TODO: lifting function that creates a fun that interprets the code
+%% TODO: add a lifting function that creates a fun that interprets the code
 
 -type tree() :: erl_syntax:syntaxTree().
 
@@ -33,34 +32,68 @@
 
 
 %% ------------------------------------------------------------------------
-%% Parse transform for turning strings to templates at compile-time
+%% Call indirections
 
-%% TODO: move out of merl module, apply to self at compile time
+init_module(Name) ->
+    merl_build:init_module(Name).
 
-%% FIXME: handle partially constant calls; only the text needs to be constant
+module_forms(Module) ->
+    merl_build:module_forms(Module).
 
-parse_transform(Forms, _Options) ->
-    P = template(hd(?Q("merl:_@function(_@@args)"))),
-    erl_syntax:revert_forms(
-      erl_syntax_lib:map(fun (T) -> transform(T, P) end,
-                         erl_syntax:form_list(Forms))).
+add_function(Exported, Name, Clauses, Module) ->
+    merl_build:add_function(Exported, Name, Clauses, Module).
 
-transform(T, P) ->
-    case match(P, T) of
-        {ok, [{args, As}, {function, {atom,_,A}=F}]}
-          when A =:= quote ; A =:= template ->
-            case lists:all(fun erl_syntax:is_literal/1, [F|As]) of
-                true ->
-                    [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
-                    try apply(merl, F1, As1) of
-                        T1 -> term(T1)
-                    catch
-                        throw:_Reason -> T
-                    end;
-                false -> T
-            end;
-        _ -> T
+add_import(From, Names, Module) ->
+    merl_build:add_import(From, Names, Module).
+
+add_record(Name, Fs, Module) ->
+    merl_build:add_record(Name, Fs, Module).
+
+add_attribute(Name, Term, Module) ->
+    merl_build:add_attribute(Name, Term, Module).
+
+
+%% ------------------------------------------------------------------------
+%% Compiling and loading code directly to memory
+
+%% @equiv compile(Code, [])
+compile(Code) ->
+    compile(Code, []).
+
+%% @doc Compile a syntax tree or list of syntax trees representing a module
+%% into a binary BEAM object.
+%% @see compile_and_load/2
+%% @see compile/1
+compile(Code, Options) when not is_list(Code)->
+    case erl_syntax:type(Code) of
+        form_list -> compile(erl_syntax:form_list_elements(Code));
+        _ -> compile([Code], Options)
+    end;
+compile(Code, Options0) when is_list(Options0) ->
+    Forms = [erl_syntax:revert(F) || F <- Code],
+    Options = [verbose, report_errors, report_warnings, binary | Options0],
+    %% Note: modules compiled from forms will have a '.' as the last character
+    %% in the string given by proplists:get_value(source,
+    %% erlang:get_module_info(ModuleName, compile)).
+    compile:noenv_forms(Forms, Options).
+
+
+%% @equiv compile_and_load(Code, [])
+compile_and_load(Code) ->
+    compile_and_load(Code, []).
+
+%% @doc Compile a syntax tree or list of syntax trees representing a module
+%% and load the resulting module into memory.
+%% @see compile/2
+%% @see compile_and_load/1
+compile_and_load(Code, Options) ->
+    case compile(Code, Options) of
+        {ok, ModuleName, Binary} ->
+            code:load_binary(ModuleName, "", Binary),
+            {ok, Binary};
+        Other -> Other
     end.
+
 
 %% ------------------------------------------------------------------------
 %% Primitives and utility functions
@@ -516,125 +549,6 @@ compare_leaves(Type, T1, T2) ->
         _ ->
             true  % trivially equal nodes
     end.
-
-
-%% ------------------------------------------------------------------------
-%% Compiling and loading code directly to memory
-
-%% @equiv compile(Code, [])
-compile(Code) ->
-    compile(Code, []).
-
-%% @doc Compile a syntax tree or list of syntax trees representing a module
-%% into a binary BEAM object.
-%% @see compile_and_load/2
-%% @see compile/1
-compile(Code, Options) when not is_list(Code)->
-    case erl_syntax:type(Code) of
-        form_list -> compile(erl_syntax:form_list_elements(Code));
-        _ -> compile([Code], Options)
-    end;
-compile(Code, Options0) when is_list(Options0) ->
-    Forms = [erl_syntax:revert(F) || F <- Code],
-    Options = [verbose, report_errors, report_warnings, binary | Options0],
-    %% Note: modules compiled from forms will have a '.' as the last character
-    %% in the string given by proplists:get_value(source,
-    %% erlang:get_module_info(ModuleName, compile)).
-    compile:noenv_forms(Forms, Options).
-
-
-%% @equiv compile_and_load(Code, [])
-compile_and_load(Code) ->
-    compile_and_load(Code, []).
-
-%% @doc Compile a syntax tree or list of syntax trees representing a module
-%% and load the resulting module into memory.
-%% @see compile/2
-%% @see compile_and_load/1
-compile_and_load(Code, Options) ->
-    case compile(Code, Options) of
-        {ok, ModuleName, Binary} ->
-            code:load_binary(ModuleName, "", Binary),
-            {ok, Binary};
-        Other -> Other
-    end.
-
-
-%% ------------------------------------------------------------------------
-%% Making it simple to build a module
-
-%% TODO: put in separate module, apply transform
-
--record(module, { name          :: atom()
-                , exports=[]    :: [{atom(), integer()}]
-                , imports=[]    :: [{atom(), [{atom(), integer()}]}]
-                , records=[]    :: [{atom(), [{atom(), term()}]}]
-                , attributes=[] :: [{atom(), [term()]}]
-                , functions=[]  :: [{atom(), {[term()],[term()],[term()]}}]
-                }).
-
-%% TODO: init module from a list of forms (from various sources)
-
-%% @doc Create a new module representation, using the given module name.
-init_module(Name) when is_atom(Name) ->
-    #module{name=Name}.
-
-%% TODO: setting current file (between forms)
-
-%% @doc Get the list of syntax tree forms for a module representation. This can
-%% be passed to compile/2.
-module_forms(#module{name=Name,
-                     exports=Xs,
-                     imports=Is,
-                     records=Rs,
-                     attributes=As,
-                     functions=Fs})
-  when is_atom(Name), Name =/= undefined ->
-    [Module] = ?Q("-module('@name').", [{name,term(Name)}]),
-    [Export] = ?Q("-export(['@_@name'/1]).",
-                  [{name, [erl_syntax:arity_qualifier(term(N), term(A))
-                           || {N,A} <- ordsets:from_list(Xs)]}]),
-    Imports = lists:concat([?Q("-import('@module', ['@_@name'/1]).",
-                               [{module,term(M)},
-                                {name,[erl_syntax:arity_qualifier(term(N),
-                                                                  term(A))
-                                       || {N,A} <- ordsets:from_list(Ns)]}])
-                            || {M, Ns} <- Is]),
-    Records = lists:concat([?Q("-record('@name',{'@_@fields'}).",
-                               [{name,term(N)},
-                                {fields,[erl_syntax:record_field(term(F),
-                                                                 term(V))
-                                         || {F,V} <- Es]}])
-                            || {N,Es} <- lists:reverse(Rs)]),
-    Attrs = lists:concat([?Q("-'@name'('@term').",
-                             [{name,term(N)}, {term,term(T)}])
-                          || {N,T} <- lists:reverse(As)]),
-    [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
-
-%% @doc Add a function to a module representation.
-add_function(Exported, Name, Clauses, #module{exports=Xs, functions=Fs}=M)
-  when is_boolean(Exported), is_atom(Name), Clauses =/= [] ->
-    Arity = length(erl_syntax:clause_patterns(hd(Clauses))),
-    Xs1 = case Exported of
-              true -> [{Name,Arity} | Xs];
-              false -> Xs
-          end,
-    M#module{exports=Xs1,
-             functions=[erl_syntax:function(term(Name), Clauses) | Fs]}.
-
-%% @doc Add an import declaration to a module representation.
-add_import(From, Names, #module{imports=Is}=M)
-  when is_atom(From), is_list(Names) ->
-    M#module{imports=[{From, Names} | Is]}.
-
-%% @doc Add a record declaration to a module representation.
-add_record(Name, Fs, #module{records=Rs}=M) when is_atom(Name) ->
-    M#module{records=[{Name, Fs} | Rs]}.
-
-%% @doc Add a "wild" attribute, such as `-compile(Opts)' to a module
-%% representation. Note that such attributes can only have a single argument.
-add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
-    M#module{attributes=[{Name, Term} | As]}.
 
 
 %% ------------------------------------------------------------------------
