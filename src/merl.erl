@@ -290,13 +290,11 @@ parse_5(Ts, Es) ->
 %% @see subst/2
 %% @see match/2
 
-%% TODO: more optimized template representation; keep ground subtrees intact
-
 %% Leaves are normal syntax trees (generally atomic), and inner nodes are
-%% tuples {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
-%% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
-%% integer, and can exist both on the group level and the node level. {'_'}
-%% and {0} are anonymous variables.
+%% tuples {template,Type,Attrs,Groups} where Groups are lists of lists of
+%% nodes. Metavariables are 1-tuples {VarName}, where VarName is an atom or
+%% an integer, and can exist both on the group level and the node level.
+%% {'_'} and {0} are anonymous variables.
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
 template(Tree) ->
@@ -304,9 +302,10 @@ template(Tree) ->
 
 template_0(Tree) ->
     case template_1(Tree) of
+        false -> Tree;
         {Kind,Name} when Kind =:= lift ; Kind =:= group ->
             fail("bad metavariable: '~s'", [Name]);
-        Other -> Other
+        Template -> Template
     end.
 
 template_1(Tree) ->
@@ -318,39 +317,58 @@ template_1(Tree) ->
                 {true,"@"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
                 {true,Cs} -> {tag(Cs)};
-                false -> Tree
+                false -> false
             end;
         Gs ->
-            Gs1 = [case [template_1(T) || T <- G] of
-                       [{group,Name}] -> {tag(Name)};
-                       G1 -> check_group(G1), G1
-                   end
-                   || G <- Gs],
-            case lift(Gs1) of
-                {true,"_"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"0"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"@"++Cs} when Cs =/= [] -> {group,Cs};
-                {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
-                {true,Cs} -> {tag(Cs)};
-                _ ->
+            case template_2(Gs, [], false) of
+                Gs1 when is_list(Gs1) ->
                     {template, erl_syntax:type(Tree),
-                     erl_syntax:get_attrs(Tree), Gs1}
+                     erl_syntax:get_attrs(Tree), Gs1};
+                Other ->
+                    Other
             end
     end.
 
+template_2([G | Gs], As, Bool) ->
+    case template_3(G, [], false) of
+        {lift, "_"++Cs} when Cs =/= [] -> {lift,Cs};
+        {lift, "0"++Cs} when Cs =/= [] -> {lift,Cs};
+        {lift, "@"++Cs} when Cs =/= [] -> {group,Cs};
+        {lift, "9"++Cs} when Cs =/= [] -> {group,Cs};
+        {lift, Name} -> {tag(Name)};
+        false ->
+            template_2(Gs, [G | As], Bool);
+        G1 ->
+            template_2(Gs, [G1 | As], true)
+    end;
+template_2([], _As, false) ->
+    false;
+template_2([], As, true) ->
+    lists:reverse(As).
+
 %% TODO: should it be allowed to mix group metavars with other elements?
 
-%% group metavariables are only allowed as the only member of their group,
-%% so as to not quietly discard the other members
+%% lifted and group metavariables are only allowed as the only member of
+%% their group, so as to not quietly discard the other members
 
-%% FIXME: is this broken? only checks for multiple group metavars in group!
+template_3([T | Ts], As, Bool) ->
+    case template_1(T) of
+        {group, Name} when Ts =/= [] ; As =/= [] ->
+            fail("group metavariable must be alone in group: '~s'", [Name]);
+        {group, Name} ->
+            {tag(Name)};
+        {lift, _}=Lift ->
+            Lift;
+        false ->
+            template_3(Ts, [T | As], Bool);
+        T1 ->
+            template_3(Ts, [T1 | As], true)
+    end;
+template_3([], _As, false) ->
+    false;
+template_3([], As, true) ->
+    lists:reverse(As).
 
-check_group(G) ->
-    case [Name || {group,Name} <- G] of
-        [] -> ok;
-        Names ->
-            fail("misplaced group metavariable: ~w", [Names])
-    end.
 
 %% convert the remains of the name string back to an integer or atom
 tag(Name) ->
@@ -358,17 +376,6 @@ tag(Name) ->
     catch
         error:badarg ->
             list_to_atom(Name)
-    end.
-
-%% allow a lifted metavariable in a subgroup to replace the entire node
-lift(Gs) ->
-    case [Name || {lift,Name} <- lists:concat([G || G <- Gs, is_list(G)])] of
-        [] ->
-            false;
-        [Name] ->
-            {true, Name};
-        Names ->
-            fail("clashing metavariables: ~w", [Names])
     end.
 
 
@@ -477,9 +484,9 @@ match_template(Tree1, Tree2, Dict) ->
         false -> throw(error)  % different trees
     end.
 
-match_template_1([{'_'} | Gs1], [Group | Gs2], Dict) ->
+match_template_1([{'_'} | Gs1], [_ | Gs2], Dict) ->
     match_template_1(Gs1, Gs2, Dict);  % anonymous variable
-match_template_1([{0} | Gs1], [Group | Gs2], Dict) ->
+match_template_1([{0} | Gs1], [_ | Gs2], Dict) ->
     match_template_1(Gs1, Gs2, Dict);  % anonymous variable
 match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
     match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
@@ -490,9 +497,9 @@ match_template_1([], [], Dict) ->
 match_template_1(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
-match_template_2([{'_'} | Ts1], [Tree | Ts2], Dict) ->
+match_template_2([{'_'} | Ts1], [_ | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, Dict);  % anonymous variable
-match_template_2([{0} | Ts1], [Tree | Ts2], Dict) ->
+match_template_2([{0} | Ts1], [_ | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, Dict);  % anonymous variable
 match_template_2([{Var} | Ts1], [Tree | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, orddict:store(Var, Tree, Dict));
