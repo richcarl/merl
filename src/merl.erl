@@ -110,15 +110,13 @@ term(Term) ->
 
 -spec is_metavar(tree()) -> {true,string()} | false.
 
-%% TODO: anonymous catch-all metavariables, not included in match result
-%% TODO: document that multiple occurrences of metavariables are not checked
-
 %% @doc Check if a tree represents a metavariable. Metavariables are atoms
 %% starting with `@', variables starting with `_@', or integers starting
 %% with `909'. Following the prefix, one or more `_' or `0' characters may
 %% be used to indicate "lifting" of the variable one or more levels, and
 %% after that, a `@' or `9' character indicates a group metavariable rather
-%% than a node metavariable.
+%% than a node metavariable. If the name after the prefix is `_' or `0', the
+%% variable is treated as an anonymous catch-all pattern in matches.
 is_metavar(Tree) ->
     case erl_syntax:type(Tree) of
         atom ->
@@ -133,7 +131,7 @@ is_metavar(Tree) ->
             end;
         integer ->
             case erl_syntax:integer_value(Tree) of
-                N when N > 9090 ->
+                N when N >= 9090 ->
                     case integer_to_list(N) of
                         "909" ++ Cs -> {true,Cs};
                         _ -> false
@@ -297,7 +295,8 @@ parse_5(Ts, Es) ->
 %% Leaves are normal syntax trees (generally atomic), and inner nodes are
 %% tuples {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
-%% integer, and can exist both on the group level and the node level.
+%% integer, and can exist both on the group level and the node level. {'_'}
+%% and {0} are anonymous variables.
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
 template(Tree) ->
@@ -418,7 +417,8 @@ subst_1({template, Type, Attrs, Groups}, Env) ->
                        {Var, _} ->
                            fail("value of group metavariable "
                                 "must be a list: '~s'", [Var]);
-                       false -> {Var}
+                       false ->
+                           {Var}
                    end;
                _ ->
                    lists:flatten([subst_1(T, Env) || T <- G])
@@ -427,15 +427,21 @@ subst_1({template, Type, Attrs, Groups}, Env) ->
     {template, Type, Attrs, Gs1};
 subst_1({Var}, Env) ->
     case lists:keyfind(Var, 1, Env) of
-        {Var, TreeOrTrees} -> TreeOrTrees;
-        false -> {Var}
+        {Var, Tree} when is_list(Tree) ->
+            fail("value of non-group metavariable "
+                 "must not be a list: '~s'", [Var]);
+        {Var, Tree} ->
+            Tree;
+        false ->
+            {Var}
     end;
 subst_1(Leaf, _Env) ->
     Leaf.
 
 %% Matches a pattern tree against a ground tree (or patterns against ground
-%% trees) returning an environment mapping variable names to subtrees;
-%% the environment is always sorted on keys
+%% trees) returning an environment mapping variable names to subtrees; the
+%% environment is always sorted on keys. Note that multiple occurrences of
+%% metavariables in the pattern is not allowed, but is not checked.
 
 match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
     try {ok, lists:foldr(fun ({P, T}, Env) -> match_0(P, T) ++ Env end,
@@ -458,6 +464,10 @@ match_template({template, Type, _, Gs}, Tree, Dict) ->
         Type -> match_template_1(Gs, erl_syntax:subtrees(Tree), Dict);
         _ -> throw(error)  % type mismatch
     end;
+match_template({'_'}, _Tree, Dict) ->
+    Dict;  % anonymous variable
+match_template({0}, _Tree, Dict) ->
+    Dict;  % anonymous variable
 match_template({Var}, Tree, Dict) ->
     orddict:store(Var, Tree, Dict);
 match_template(Tree1, Tree2, Dict) ->
@@ -467,6 +477,10 @@ match_template(Tree1, Tree2, Dict) ->
         false -> throw(error)  % different trees
     end.
 
+match_template_1([{'_'} | Gs1], [Group | Gs2], Dict) ->
+    match_template_1(Gs1, Gs2, Dict);  % anonymous variable
+match_template_1([{0} | Gs1], [Group | Gs2], Dict) ->
+    match_template_1(Gs1, Gs2, Dict);  % anonymous variable
 match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
     match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
 match_template_1([G1 | Gs1], [G2 | Gs2], Dict) ->
@@ -476,6 +490,10 @@ match_template_1([], [], Dict) ->
 match_template_1(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
+match_template_2([{'_'} | Ts1], [Tree | Ts2], Dict) ->
+    match_template_2(Ts1, Ts2, Dict);  % anonymous variable
+match_template_2([{0} | Ts1], [Tree | Ts2], Dict) ->
+    match_template_2(Ts1, Ts2, Dict);  % anonymous variable
 match_template_2([{Var} | Ts1], [Tree | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, orddict:store(Var, Tree, Dict));
 match_template_2([T1 | Ts1], [T2 | Ts2], Dict) ->
