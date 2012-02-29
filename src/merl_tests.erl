@@ -9,7 +9,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--compile({parse_transform, merl}).
+-compile({parse_transform, merl_transform}).
 
 %% utilities
 
