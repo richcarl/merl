@@ -5,7 +5,7 @@
 
 -module(merl).
 
--export([term/1, var/1, is_metavar/1]).
+-export([term/1, var/1]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
@@ -108,7 +108,7 @@ var(Name) ->
 term(Term) ->
     erl_syntax:abstract(Term).
 
--spec is_metavar(tree()) -> {true,string()} | false.
+-spec metavar(tree()) -> {string()} | false.
 
 %% @doc Check if a tree represents a metavariable. Metavariables are atoms
 %% starting with `@', variables starting with `_@', or integers starting
@@ -117,23 +117,23 @@ term(Term) ->
 %% after that, a `@' or `9' character indicates a group metavariable rather
 %% than a node metavariable. If the name after the prefix is `_' or `0', the
 %% variable is treated as an anonymous catch-all pattern in matches.
-is_metavar(Tree) ->
+metavar(Tree) ->
     case erl_syntax:type(Tree) of
         atom ->
             case erl_syntax:atom_name(Tree) of
-                "@" ++ Cs when Cs =/= [] -> {true,Cs};
+                "@" ++ Cs when Cs =/= [] -> {Cs};
                 _ -> false
             end;
         variable ->
             case erl_syntax:variable_literal(Tree) of
-                "_@" ++ Cs when Cs =/= [] -> {true,Cs};
+                "_@" ++ Cs when Cs =/= [] -> {Cs};
                 _ -> false
             end;
         integer ->
             case erl_syntax:integer_value(Tree) of
                 N when N >= 9090 ->
                     case integer_to_list(N) of
-                        "909" ++ Cs -> {true,Cs};
+                        "909" ++ Cs -> {Cs};
                         _ -> false
                     end;
                 _ -> false
@@ -286,15 +286,16 @@ parse_5(Ts, Es) ->
 %% Templates, substitution and matching
 
 %% @doc Turn a syntax tree into a template. Templates can be instantiated or
-%% matched against.
+%% matched against, and reverted to a syntax tree with {@link tree/1}.
 %% @see subst/2
 %% @see match/2
+%% @see tree/1
 
-%% Leaves are normal syntax trees (generally atomic), and inner nodes are
-%% tuples {template,Type,Attrs,Groups} where Groups are lists of lists of
-%% nodes. Metavariables are 1-tuples {VarName}, where VarName is an atom or
-%% an integer, and can exist both on the group level and the node level.
-%% {'_'} and {0} are anonymous variables.
+%% Leaves are normal syntax trees, and inner nodes are tuples
+%% {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
+%% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
+%% integer, and can exist both on the group level and the node level. {'_'}
+%% and {0} work as anonymous variables in matching.
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
 template(Tree) ->
@@ -303,20 +304,22 @@ template(Tree) ->
 template_0(Tree) ->
     case template_1(Tree) of
         false -> Tree;
-        {Kind,Name} when Kind =:= lift ; Kind =:= group ->
+        {Name} when is_list(Name) ->
             fail("bad metavariable: '~s'", [Name]);
         Template -> Template
     end.
 
+%% TODO: simply use Cs as marker instead of lift/group?
+
 template_1(Tree) ->
     case erl_syntax:subtrees(Tree) of
         [] ->
-            case is_metavar(Tree) of
-                {true,"_"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"0"++Cs} when Cs =/= [] -> {lift,Cs};
-                {true,"@"++Cs} when Cs =/= [] -> {group,Cs};
-                {true,"9"++Cs} when Cs =/= [] -> {group,Cs};
-                {true,Cs} -> {tag(Cs)};
+            case metavar(Tree) of
+                {"@"++Cs}=V when Cs =/= [] -> V;
+                {"9"++Cs}=V when Cs =/= [] -> V;
+                {"_"++Cs}=V when Cs =/= [] -> V;
+                {"0"++Cs}=V when Cs =/= [] -> V;
+                {Name} -> {tag(Name)};
                 false -> false
             end;
         Gs ->
@@ -331,20 +334,16 @@ template_1(Tree) ->
 
 template_2([G | Gs], As, Bool) ->
     case template_3(G, [], false) of
-        {lift, "_"++Cs} when Cs =/= [] -> {lift,Cs};
-        {lift, "0"++Cs} when Cs =/= [] -> {lift,Cs};
-        {lift, "@"++Cs} when Cs =/= [] -> {group,Cs};
-        {lift, "9"++Cs} when Cs =/= [] -> {group,Cs};
-        {lift, Name} -> {tag(Name)};
-        false ->
-            template_2(Gs, [G | As], Bool);
-        G1 ->
-            template_2(Gs, [G1 | As], true)
+        {"@"++Cs}=V when Cs =/= [] -> V;
+        {"9"++Cs}=V when Cs =/= [] -> V;
+        {"_"++Cs}=V when Cs =/= [] -> V;
+        {"0"++Cs}=V when Cs =/= [] -> V;
+        {Name} when is_list(Name) -> {tag(Name)};
+        false -> template_2(Gs, [G | As], Bool);
+        G1 -> template_2(Gs, [G1 | As], true)
     end;
-template_2([], _As, false) ->
-    false;
-template_2([], As, true) ->
-    lists:reverse(As).
+template_2([], _As, false) -> false;
+template_2([], As, true) -> lists:reverse(As).
 
 %% TODO: should it be allowed to mix group metavars with other elements?
 
@@ -353,22 +352,20 @@ template_2([], As, true) ->
 
 template_3([T | Ts], As, Bool) ->
     case template_1(T) of
-        {group, Name} when Ts =/= [] ; As =/= [] ->
-            fail("group metavariable must be alone in group: '~s'", [Name]);
-        {group, Name} ->
-            {tag(Name)};
-        {lift, _}=Lift ->
-            Lift;
-        false ->
-            template_3(Ts, [T | As], Bool);
-        T1 ->
-            template_3(Ts, [T1 | As], true)
+        {"@"++Name} when Ts =/= [] ; As =/= [] -> fail_group(Name);
+        {"@"++Name} -> {tag(Name)};
+        {"9"++Name} when Ts =/= [] ; As =/= [] -> fail_group(Name);
+        {"9"++Name} -> {tag(Name)};
+        {"_"++Cs} when Cs =/= [] -> {Cs};  % lift
+        {"0"++Cs} when Cs =/= [] -> {Cs};  % lift
+        false -> template_3(Ts, [T | As], Bool);
+        T1 -> template_3(Ts, [T1 | As], true)
     end;
-template_3([], _As, false) ->
-    false;
-template_3([], As, true) ->
-    lists:reverse(As).
+template_3([], _As, false) -> false;
+template_3([], As, true) -> lists:reverse(As).
 
+fail_group(Name) ->
+    fail("group metavariable must be alone in group: '~s'", [Name]).
 
 %% convert the remains of the name string back to an integer or atom
 tag(Name) ->
