@@ -309,8 +309,6 @@ template_0(Tree) ->
         Template -> Template
     end.
 
-%% TODO: simply use Cs as marker instead of lift/group?
-
 template_1(Tree) ->
     case erl_syntax:subtrees(Tree) of
         [] ->
