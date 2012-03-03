@@ -27,7 +27,7 @@
 
 -type pattern() :: tree() | template().
 
--type env() :: [{Key::id(), tree() | template()}].
+-type env() :: [{Key::id(), pattern() | [pattern()]}].
 
 -type id() :: atom() | integer().
 
@@ -398,7 +398,12 @@ tree_1(Leaf) ->
 -spec subst(pattern() | [pattern()], env()) -> template() | [template()].
 
 %% @doc Substitute metavariables in a pattern or list of patterns, yielding
-%% a template or list of templates as result.
+%% a template or list of templates as result. For a non-group metavariable,
+%% the substituted value may be a single element or a list of elements, and
+%% the resulting group is the concatenation of all the elements. For
+%% example, if a list representing "1, 2, 3" is substituted for 'var' in
+%% "[foo, _@var, bar]", the result represents "[foo, 1, 2, 3, bar]". For
+%% group metavariables, the substituted value must always be a list.
 
 subst(Trees, Env) when is_list(Trees) ->
     [subst_0(T, Env) || T <- Trees];
@@ -411,7 +416,7 @@ subst_0(Tree, Env) ->
 
 subst_1({template, Type, Attrs, Groups}, Env) ->
     Gs1 = [case G of
-               {Var} ->
+               {Var}=V ->
                    case lists:keyfind(Var, 1, Env) of
                        {Var, G1} when is_list(G1) ->
                            G1;
@@ -419,22 +424,17 @@ subst_1({template, Type, Attrs, Groups}, Env) ->
                            fail("value of group metavariable "
                                 "must be a list: '~s'", [Var]);
                        false ->
-                           {Var}
+                           V
                    end;
                _ ->
                    lists:flatten([subst_1(T, Env) || T <- G])
            end
            || G <- Groups],
     {template, Type, Attrs, Gs1};
-subst_1({Var}, Env) ->
+subst_1({Var}=V, Env) ->
     case lists:keyfind(Var, 1, Env) of
-        {Var, Tree} when is_list(Tree) ->
-            fail("value of non-group metavariable "
-                 "must not be a list: '~s'", [Var]);
-        {Var, Tree} ->
-            Tree;
-        false ->
-            {Var}
+        {Var, TreeOrTrees} -> TreeOrTrees;
+        false -> V
     end;
 subst_1(Leaf, _Env) ->
     Leaf.
