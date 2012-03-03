@@ -9,7 +9,7 @@
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
--export([template/1, subst/2, match/2]).
+-export([template/1, tree/1, subst/2, match/2]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
          add_import/3, add_attribute/3]).
@@ -19,14 +19,21 @@
 -include("../include/merl.hrl").
 
 %% TODO: simple text visualization of syntax trees, for debugging etc.?
+%% TODO: utility function to get free/bound variables in expr?
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
-%% TODO: add a lifting function that creates a fun that interprets the code
+%% TODO: add a lifting function that creates a fun that interprets code?
 
 -type tree() :: erl_syntax:syntaxTree().
 
--type env() :: [{Key::atom(), tree()}].
+-type pattern() :: tree() | template().
 
--type text() :: string() | [string()].
+-type env() :: [{Key::id(), tree() | template()}].
+
+-type id() :: atom() | integer().
+
+%% A list of strings or binaries is assumed to represent individual lines,
+%% while a flat string or binary represents source code containing newlines.
+-type text() :: string() | binary() | [string()] | [binary()].
 
 -type location() :: erl_scan:location().
 
@@ -96,50 +103,25 @@ compile_and_load(Code, Options) ->
 
 
 %% ------------------------------------------------------------------------
-%% Primitives and utility functions
+%% Utility functions
 
 %% TODO: setting line numbers
 
+
+-spec var(atom()) -> tree().
+
 %% @doc Create a variable.
+
 var(Name) ->
     erl_syntax:variable(Name).
 
+
+-spec term(term()) -> tree().
+
 %% @doc Create a syntax tree for a constant term.
+
 term(Term) ->
     erl_syntax:abstract(Term).
-
--spec metavar(tree()) -> {string()} | false.
-
-%% @doc Check if a tree represents a metavariable. Metavariables are atoms
-%% starting with `@', variables starting with `_@', or integers starting
-%% with `909'. Following the prefix, one or more `_' or `0' characters may
-%% be used to indicate "lifting" of the variable one or more levels, and
-%% after that, a `@' or `9' character indicates a group metavariable rather
-%% than a node metavariable. If the name after the prefix is `_' or `0', the
-%% variable is treated as an anonymous catch-all pattern in matches.
-metavar(Tree) ->
-    case erl_syntax:type(Tree) of
-        atom ->
-            case erl_syntax:atom_name(Tree) of
-                "@" ++ Cs when Cs =/= [] -> {Cs};
-                _ -> false
-            end;
-        variable ->
-            case erl_syntax:variable_literal(Tree) of
-                "_@" ++ Cs when Cs =/= [] -> {Cs};
-                _ -> false
-            end;
-        integer ->
-            case erl_syntax:integer_value(Tree) of
-                N when N >= 9090 ->
-                    case integer_to_list(N) of
-                        "909" ++ Cs -> {Cs};
-                        _ -> false
-                    end;
-                _ -> false
-            end;
-        _ -> false
-    end.
 
 
 %% ------------------------------------------------------------------------
@@ -148,12 +130,13 @@ metavar(Tree) ->
 %% The quoting functions always return a list of one or more elements.
 
 %% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
-%% TODO: only take lists of lines, or plain lines as well? splitting?
 
 
 -spec qquote(Text::text(), Env::[{Key::atom(),term()}]) -> [term()].
 
-%% @doc Parse text and substitute meta-variables from environment.
+%% @doc Parse text and substitute meta-variables.
+%%
+%% @equiv qquote(1, Text, Env)
 
 qquote(Text, Env) ->
     qquote(1, Text, Env).
@@ -161,15 +144,20 @@ qquote(Text, Env) ->
 
 -spec qquote(StartPos::location(), Text::text(), Env::env()) -> [tree()].
 
+%% @doc Parse text and substitute meta-variables. Takes an initial scanner
+%% starting position as first argument.
+%%
 %% @see quote/2
 
 qquote(StartPos, Text, Env) ->
-    lists:flatmap(fun (T) -> subst(T, Env) end, quote(StartPos, Text)).
+    lists:map(fun (T) -> subst(T, Env) end, quote(StartPos, Text)).
 
 
 -spec quote(Text::text()) -> [tree()].
 
 %% @doc Parse text.
+%%
+%% @equiv quote(1, Text)
 
 quote(Text) ->
     quote(1, Text).
@@ -177,6 +165,9 @@ quote(Text) ->
 
 -spec quote(StartPos::location(), Text::text()) -> [tree()].
 
+%% @doc Parse text. Takes an initial scanner starting position as first
+%% argument.
+%%
 %% @see quote/1
 
 quote({Line, Col}, Text)
@@ -196,11 +187,6 @@ quote_1(StartLine, StartCol, Text) ->
                end,
     {ok, Ts, _} = erl_scan:string(flatten_text(Text), StartPos),
     parse_1(Ts).
-
-flatten_text([L | _]=Lines) when is_list(L) ->
-    lists:foldr(fun(S, T) -> S ++ [$\n | T] end, "", Lines);
-flatten_text(Text) ->
-    Text.
 
 parse_1(Ts) ->
     %% if dot tokens are present, it is assumed that the text represents
@@ -285,8 +271,13 @@ parse_5(Ts, Es) ->
 %% ------------------------------------------------------------------------
 %% Templates, substitution and matching
 
-%% @doc Turn a syntax tree into a template. Templates can be instantiated or
-%% matched against, and reverted to a syntax tree with {@link tree/1}.
+-spec template(pattern() | [pattern()]) -> template() | [template()].
+
+%% @doc Turn a syntax tree or list of trees into a template or templates.
+%% Templates can be instantiated or matched against, and reverted back to
+%% normal syntax trees using {@link tree/1}. If the input is already a
+%% template, it is not modified further.
+%%
 %% @see subst/2
 %% @see match/2
 %% @see tree/1
@@ -296,11 +287,18 @@ parse_5(Ts, Es) ->
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
 %% integer, and can exist both on the group level and the node level. {'_'}
 %% and {0} work as anonymous variables in matching.
+
+-opaque template() :: tree()
+                    | {id()}
+                    | {template, atom(), term(), [[template()]]}.
+
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
 template(Tree) ->
     template_0(Tree).
 
+template_0({template, _, _, _}=Template) -> Template;
+template_0({_}=Template) -> Template;
 template_0(Tree) ->
     case template_1(Tree) of
         false -> Tree;
@@ -312,7 +310,7 @@ template_0(Tree) ->
 template_1(Tree) ->
     case erl_syntax:subtrees(Tree) of
         [] ->
-            case metavar(Tree) of
+            case check_meta(Tree) of
                 {"@"++Cs}=V when Cs =/= [] -> V;
                 {"9"++Cs}=V when Cs =/= [] -> V;
                 {"_"++Cs}=V when Cs =/= [] -> V;
@@ -365,37 +363,43 @@ template_3([], As, true) -> lists:reverse(As).
 fail_group(Name) ->
     fail("group metavariable must be alone in group: '~s'", [Name]).
 
-%% convert the remains of the name string back to an integer or atom
-tag(Name) ->
-    try list_to_integer(Name)
-    catch
-        error:badarg ->
-            list_to_atom(Name)
-    end.
 
+-spec tree(template() | [template()]) -> tree() | [tree()].
 
-%% @doc Revert a template tree to a normal syntax tree. Any remaining
-%% metavariables are turned into @-prefixed atoms or 909-prefixed integers.
-tree({template, Type, Attrs, Groups}) ->
+%% @doc Revert a template to a normal syntax tree. Any remaining
+%% metavariables are turned into `@'-prefixed atoms or `909'-prefixed
+%% integers.
+%% @see template/1
+
+tree(Templates) when is_list(Templates) ->
+    [tree_1(T) || T <- Templates];
+tree(Template) ->
+    tree_1(Template).
+
+tree_1({template, Type, Attrs, Groups}) ->
     Gs = [case G of
               {Var} when is_atom(Var) ->
                   [erl_syntax:atom(tag("@@"++atom_to_list(Var)))];
               {Var} when is_integer(Var) ->
                   [erl_syntax:integer(tag("9099"++integer_to_list(Var)))];
               _ ->
-                  [tree(T) || T <- G]
+                  [tree_1(T) || T <- G]
           end
           || G <- Groups],
     erl_syntax:set_attrs(erl_syntax:make_tree(Type, Gs), Attrs);
-tree({Var}) when is_atom(Var) ->
+tree_1({Var}) when is_atom(Var) ->
     erl_syntax:atom("@"++atom_to_list(Var));
-tree({Var}) when is_integer(Var) ->
+tree_1({Var}) when is_integer(Var) ->
     erl_syntax:integer(tag("909"++integer_to_list(Var)));
-tree(Leaf) ->
+tree_1(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
 
-%% @doc Substitute metavariables, both on group and node level.
+-spec subst(pattern() | [pattern()], env()) -> template() | [template()].
+
+%% @doc Substitute metavariables in a pattern or list of patterns, yielding
+%% a template or list of templates as result.
+
 subst(Trees, Env) when is_list(Trees) ->
     [subst_0(T, Env) || T <- Trees];
 subst(Tree, Env) ->
@@ -403,12 +407,7 @@ subst(Tree, Env) ->
 
 subst_0(Tree, Env) ->
     %% TODO: can we do this faster instead of going via the template form?
-    tree(subst_1(ensure_template(Tree), Env)).
-
-%% handle both trees and templates as input
-ensure_template({template, _, _, _}=Template) -> Template;
-ensure_template({_}=Template) -> Template;
-ensure_template(Tree) -> template(Tree).
+    tree_1(subst_1(template(Tree), Env)).
 
 subst_1({template, Type, Attrs, Groups}, Env) ->
     Gs1 = [case G of
@@ -440,25 +439,32 @@ subst_1({Var}, Env) ->
 subst_1(Leaf, _Env) ->
     Leaf.
 
-%% Matches a pattern tree against a ground tree (or patterns against ground
+
+-spec match(pattern() | [pattern()], tree() | [tree()]) ->
+                   {ok, env()} | error.
+
+%% @doc Match a pattern against a syntax tree (or patterns against syntax
 %% trees) returning an environment mapping variable names to subtrees; the
 %% environment is always sorted on keys. Note that multiple occurrences of
 %% metavariables in the pattern is not allowed, but is not checked.
+%%
+%% @see template/1
 
 match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
-    try {ok, lists:foldr(fun ({P, T}, Env) -> match_0(P, T) ++ Env end,
-                         [], lists:zip(Patterns, Trees))}
+    try {ok, match_1(Patterns, Trees, [])}
     catch
         error -> error
     end;
 match(Pattern, Tree) ->
-    try {ok, match_0(Pattern, Tree)}
+    try {ok, match_template(template(Pattern), Tree, [])}
     catch
         error -> error
     end.
 
-match_0(Pattern, Tree) ->
-    match_template(ensure_template(Pattern), Tree, []).
+match_1([P|Ps], [T | Ts], Dict) ->
+    match_1(Ps, Ts, match_template(template(P), T, Dict));
+match_1([], [], Dict) ->
+    Dict.
 
 %% match a template against a syntax tree
 match_template({template, Type, _, Gs}, Tree, Dict) ->
@@ -505,7 +511,7 @@ match_template_2([], [], Dict) ->
 match_template_2(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
-%% match two syntax trees, ignoring metavariables on either side
+%% compare two syntax trees for equivalence
 compare_trees(T1, T2) ->
     Type1 = erl_syntax:type(T1),
     case erl_syntax:type(T2) of
@@ -579,3 +585,54 @@ fail(Text) ->
 
 fail(Fs, As) ->
     throw({error, lists:flatten(io_lib:format(Fs, As))}).
+
+flatten_text([L | _]=Lines) when is_list(L) ->
+    lists:foldr(fun(S, T) -> S ++ [$\n | T] end, "", Lines);
+flatten_text([B | _]=Lines) when is_binary(B) ->
+    lists:foldr(fun(S, T) -> binary_to_list(S) ++ [$\n | T] end, "", Lines);
+flatten_text(Text) when is_binary(Text) ->
+    binary_to_list(Text);
+flatten_text(Text) ->
+    Text.
+
+%% convert a metavariable name string back to an integer or atom
+tag(Name) ->
+    try list_to_integer(Name)
+    catch
+        error:badarg ->
+            list_to_atom(Name)
+    end.
+
+-spec check_meta(tree()) -> {string()} | false.
+
+%% Check if a syntax tree represents a metavariable. Metavariables are atoms
+%% starting with `@', variables starting with `_@', or integers starting
+%% with `909'. Following the prefix, one or more `_' or `0' characters may
+%% be used to indicate "lifting" of the variable one or more levels, and
+%% after that, a `@' or `9' character indicates a group metavariable rather
+%% than a node metavariable. If the name after the prefix is `_' or `0', the
+%% variable is treated as an anonymous catch-all pattern in matches.
+
+check_meta(Tree) ->
+    case erl_syntax:type(Tree) of
+        atom ->
+            case erl_syntax:atom_name(Tree) of
+                "@" ++ Cs when Cs =/= [] -> {Cs};
+                _ -> false
+            end;
+        variable ->
+            case erl_syntax:variable_literal(Tree) of
+                "_@" ++ Cs when Cs =/= [] -> {Cs};
+                _ -> false
+            end;
+        integer ->
+            case erl_syntax:integer_value(Tree) of
+                N when N >= 9090 ->
+                    case integer_to_list(N) of
+                        "909" ++ Cs -> {Cs};
+                        _ -> false
+                    end;
+                _ -> false
+            end;
+        _ -> false
+    end.
