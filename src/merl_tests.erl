@@ -2,6 +2,7 @@
 %% @author Richard Carlsson <carlsson.richard@gmail.com>
 %% @copyright 2012 Richard Carlsson
 %% @doc Unit tests for merl.
+%% @private
 
 -module(merl_tests).
 
@@ -9,7 +10,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--compile({parse_transform, merl_transform}).
 
 %% utilities
 

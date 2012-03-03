@@ -16,7 +16,7 @@
 
 -export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
--include("../include/merl.hrl").
+%-include("../include/merl.hrl").
 
 %% TODO: multi-match, matching a set of patterns against one tree
 %% TODO: simple text visualization of syntax trees, for debugging etc.?

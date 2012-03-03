@@ -1,13 +1,14 @@
 %% ---------------------------------------------------------------------
 %% @author Richard Carlsson <richardc@klarna.com>
 %% @copyright 2012 Richard Carlsson
-%% @doc Parse transform for merl. Turns strings to templates at
-%% compile-time.
+%% @doc Parse transform for merl. Evaluates calls to functions in `merl',
+%% turning strings to templates, etc., at compile-time.
 
 -module(merl_transform).
 
 -export([parse_transform/2]).
 
+-define(MERL_NO_TRANSFORM, true).
 -include("../include/merl.hrl").
 
 
