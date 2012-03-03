@@ -341,7 +341,7 @@ template_2([G | Gs], As, Bool) ->
 template_2([], _As, false) -> false;
 template_2([], As, true) -> lists:reverse(As).
 
-%% TODO: should it be allowed to mix group metavars with other elements?
+%% TODO: mix group metavars with other elements for pattern matching?
 
 %% lifted and group metavariables are only allowed as the only member of
 %% their group, so as to not quietly discard the other members
