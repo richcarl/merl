@@ -9,7 +9,7 @@
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
--export([template/1, tree/1, subst/2, match/2]).
+-export([template/1, tree/1, subst/2, tsubst/2, match/2]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
          add_import/3, add_attribute/3]).
@@ -18,6 +18,7 @@
 
 -include("../include/merl.hrl").
 
+%% TODO: multi-match, matching a set of patterns against one tree
 %% TODO: simple text visualization of syntax trees, for debugging etc.?
 %% TODO: utility function to get free/bound variables in expr?
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
@@ -150,7 +151,7 @@ qquote(Text, Env) ->
 %% @see quote/2
 
 qquote(StartPos, Text, Env) ->
-    lists:map(fun (T) -> subst(T, Env) end, quote(StartPos, Text)).
+    subst(quote(StartPos, Text), Env).
 
 
 -spec quote(Text::text()) -> [tree()].
@@ -395,10 +396,10 @@ tree_1(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
 
--spec subst(pattern() | [pattern()], env()) -> template() | [template()].
+-spec subst(pattern() | [pattern()], env()) -> tree() | [tree()].
 
 %% @doc Substitute metavariables in a pattern or list of patterns, yielding
-%% a template or list of templates as result. For a non-group metavariable,
+%% a syntax tree or list of trees as result. For a non-group metavariable,
 %% the substituted value may be a single element or a list of elements, and
 %% the resulting group is the concatenation of all the elements. For
 %% example, if a list representing "1, 2, 3" is substituted for 'var' in
@@ -411,8 +412,19 @@ subst(Tree, Env) ->
     subst_0(Tree, Env).
 
 subst_0(Tree, Env) ->
-    %% TODO: can we do this faster instead of going via the template form?
     tree_1(subst_1(template(Tree), Env)).
+
+-spec tsubst(pattern() | [pattern()], env()) -> template() | [template()].
+
+%% @doc Like subst/2, but does not convert the result from a template back
+%% to a tree. Useful if you want to do multiple separate substitutions.
+%% @see subst/2
+%% @see tree/2
+
+tsubst(Trees, Env) when is_list(Trees) ->
+    [subst_1(template(T), Env) || T <- Trees];
+tsubst(Tree, Env) ->
+    subst_1(template(Tree), Env).
 
 subst_1({template, Type, Attrs, Groups}, Env) ->
     Gs1 = [case G of
