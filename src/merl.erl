@@ -127,13 +127,10 @@ term(Term) ->
 %% ------------------------------------------------------------------------
 %% Parsing and instantiating code fragments
 
-%% TODO: quoting: return single tree T if result is [T], and list otherwise?
-%% The quoting functions always return a list of one or more elements.
-
 %% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
 
 
--spec qquote(Text::text(), Env::[{Key::atom(),term()}]) -> [term()].
+-spec qquote(Text::text(), Env::env()) -> tree() | [tree()].
 
 %% @doc Parse text and substitute meta-variables.
 %%
@@ -143,7 +140,8 @@ qquote(Text, Env) ->
     qquote(1, Text, Env).
 
 
--spec qquote(StartPos::location(), Text::text(), Env::env()) -> [tree()].
+-spec qquote(StartPos::location(), Text::text(), Env::env()) ->
+                    tree() | [tree()].
 
 %% @doc Parse text and substitute meta-variables. Takes an initial scanner
 %% starting position as first argument.
@@ -164,7 +162,7 @@ quote(Text) ->
     quote(1, Text).
 
 
--spec quote(StartPos::location(), Text::text()) -> [tree()].
+-spec quote(StartPos::location(), Text::text()) -> tree() | [tree()].
 
 %% @doc Parse text. Takes an initial scanner starting position as first
 %% argument.
@@ -187,7 +185,10 @@ quote_1(StartLine, StartCol, Text) ->
                    _ -> {StartLine, StartCol}
                end,
     {ok, Ts, _} = erl_scan:string(flatten_text(Text), StartPos),
-    parse_1(Ts).
+    case parse_1(Ts) of
+        [T] -> T;
+        Other -> Other
+    end.
 
 parse_1(Ts) ->
     %% if dot tokens are present, it is assumed that the text represents
@@ -288,6 +289,10 @@ parse_5(Ts, Es) ->
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
 %% integer, and can exist both on the group level and the node level. {'_'}
 %% and {0} work as anonymous variables in matching.
+
+%% Note that although template() :: tree() | ..., it is implied that these
+%% syntax trees are free from metavariables, so pattern() :: tree() |
+%% template() is in fact a wider type than template().
 
 -opaque template() :: tree()
                     | {id()}

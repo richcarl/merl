@@ -20,7 +20,7 @@ parse_transform(Forms, _Options) ->
 
 transform(T) ->
     merl:switch(
-      [T],
+      T,
       [{?Q("merl:_@function(_@@args)"),
         [{fun ([{args, As}, {function, F}]) ->
                   lists:all(fun erl_syntax:is_literal/1, [F|As])
@@ -31,7 +31,7 @@ transform(T) ->
           end},
          fun ([{args, As}, {function, F}]) ->
                  merl:switch(
-                   [F],
+                   F,
                    [{?Q("qquote"), fun ([]) -> expand_quote(As, T, 1) end},
                     {?Q("subst"), fun ([]) -> expand_template(F, As, T) end},
                     {?Q("match"), fun ([]) -> expand_template(F, As, T) end},
@@ -51,10 +51,10 @@ expand_quote([Text, Env], T, StartPos) ->
     case erl_syntax:is_literal(Text) of
         true ->
             As = [StartPos, erl_syntax:concrete(Text)],
-            [T1] = ?Q("merl:subst(_@tree, _@env)",
-                      [{tree, eval_call(merl, quote, As, T)},
-                       {env, Env}]),
-            transform(T1);  % keep expanding if possible
+            % keep expanding if possible
+            transform(?Q("merl:subst(_@tree, _@env)",
+                         [{tree, eval_call(merl, quote, As, T)},
+                          {env, Env}]));
         false ->
             T
     end.
@@ -63,11 +63,10 @@ expand_template(F, [Pattern | Args], T) ->
     case erl_syntax:is_literal(Pattern) of
         true ->
             As = [erl_syntax:concrete(Pattern)],
-            [T1] = ?Q("merl:_@function(_@pattern, _@args)",
-                      [{function, F},
-                       {pattern, eval_call(merl, template, As, T)},
-                       {args, Args}]),
-            T1;
+            ?Q("merl:_@function(_@pattern, _@args)",
+               [{function, F},
+                {pattern, eval_call(merl, template, As, T)},
+                {args, Args}]);
         false ->
             T
     end.
