@@ -9,16 +9,15 @@
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
--export([template/1, tree/1, subst/2, tsubst/2, match/2]).
+-export([template/1, tree/1, subst/2, tsubst/2, match/2, switch/2]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
          add_import/3, add_attribute/3]).
 
 -export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
-%-include("../include/merl.hrl").
+%% NOTE: this module should not include merl.hrl!
 
-%% TODO: multi-match, matching a set of patterns against one tree
 %% TODO: simple text visualization of syntax trees, for debugging etc.?
 %% TODO: utility function to get free/bound variables in expr?
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
@@ -128,6 +127,7 @@ term(Term) ->
 %% ------------------------------------------------------------------------
 %% Parsing and instantiating code fragments
 
+%% TODO: quoting: return single tree T if result is [T], and list otherwise?
 %% The quoting functions always return a list of one or more elements.
 
 %% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
@@ -461,6 +461,7 @@ subst_1(Leaf, _Env) ->
 %% metavariables in the pattern is not allowed, but is not checked.
 %%
 %% @see template/1
+%% @see switch/2
 
 match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
     try {ok, match_1(Patterns, Trees, [])}
@@ -587,6 +588,69 @@ compare_leaves(Type, T1, T2) ->
         _ ->
             true  % trivially equal nodes
     end.
+
+
+%% @doc Match against multiple guarded clauses.
+%% @see match/2
+
+-type guard() :: fun( (env()) -> boolean() ).
+
+-type body() :: fun( (env()) -> any() ).
+
+-type guarded_body() :: {guard(), body()}.
+
+-type default() :: fun( () -> any() ).
+
+-type clause() :: {pattern() | [pattern()], body()}
+                | {pattern() | [pattern()], guarded_body()}
+                | {pattern() | [pattern()], [guarded_body() | body()]}
+                | {pattern() | [pattern()], guard(), body()}
+                | default().
+
+-spec switch(tree() | [tree()], [clause()]) -> any().
+
+switch(Tree, [{Pattern, Body} | Cs]) ->
+    switch_1(Tree, Pattern, Body, Cs);
+switch(Tree, [{Pattern, Guard, Body} | Cs]) ->
+    switch_1(Tree, Pattern, {Guard, Body}, Cs);
+switch(_Tree, [Body]) when is_function(Body, 0) ->
+    Body();
+switch(_Tree, []) ->
+    erlang:error(merl_switch_clause);
+switch(_Tree, _) ->
+    erlang:error(merl_switch_badarg).
+
+switch_1(Tree, Pattern, Body, Cs) ->
+    case merl:match(Pattern, Tree) of
+        {ok, Env} ->
+            case Body of
+                List when is_list(List) ->
+                    switch_2(Env, List);
+                {Guard, Body1}
+                  when is_function(Guard, 1), is_function(Body1, 1) ->
+                    case Guard(Env) of
+                        true -> Body1(Env);
+                        false -> switch(Tree, Cs)
+                    end;
+                _ when is_function(Body, 1) ->
+                    Body(Env);
+                _ ->
+                    erlang:error(merl_switch_badarg)
+            end;
+        error ->
+            switch(Tree, Cs)
+    end.
+
+switch_2(Env, [{Guard, Body} | Cs])
+  when is_function(Guard, 1), is_function(Body, 1) ->
+    case Guard(Env) of
+        true -> Body(Env);
+        false -> switch_2(Env, Cs)
+    end;
+switch_2(Env, [Body]) when is_function(Body, 1) ->
+    Body(Env);
+switch_2(_Env, _) ->
+    erlang:error(merl_switch_badarg).
 
 
 %% ------------------------------------------------------------------------

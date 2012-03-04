@@ -11,48 +11,43 @@
 -include("../include/merl.hrl").
 
 
+%% TODO: unroll calls to switch? it will probably get messy
+
 parse_transform(Forms, _Options) ->
     erl_syntax:revert_forms(
       erl_syntax_lib:map(fun (T) -> transform(T) end,
                          erl_syntax:form_list(Forms))).
 
 transform(T) ->
-    case merl:match(?Q("merl:_@function(_@@args)"), [T]) of
-        {ok, [{args, As}, {function, F}]} ->
-            case lists:all(fun erl_syntax:is_literal/1, [F|As]) of
-                true ->
-                    [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
-                    eval_call(merl, F1, As1, T);
-                false ->
-                    case merl:match(?Q("qquote"), [F]) of
-                        {ok, _} ->
-                            expand_qquote(As, T, 1);
-                        error ->
-                            case merl:match(?Q("subst"), [F]) of
-                                {ok, _} ->
-                                    expand_subst(As, T);
-                                error ->
-                                    case merl:match(?Q("match"), [F]) of
-                                        {ok, _} ->
-                                            expand_match(As, T);
-                                        error ->
-                                            T
-                                    end
-                            end
-                    end
-            end;
-        error ->
-            T
-    end.
+    merl:switch(
+      [T],
+      [{?Q("merl:_@function(_@@args)"),
+        [{fun ([{args, As}, {function, F}]) ->
+                  lists:all(fun erl_syntax:is_literal/1, [F|As])
+          end,
+          fun ([{args, As}, {function, F}]) ->
+                  [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
+                  eval_call(merl, F1, As1, T)
+          end},
+         fun ([{args, As}, {function, F}]) ->
+                 merl:switch(
+                   [F],
+                   [{?Q("qquote"), fun ([]) -> expand_quote(As, T, 1) end},
+                    {?Q("subst"), fun ([]) -> expand_template(F, As, T) end},
+                    {?Q("match"), fun ([]) -> expand_template(F, As, T) end},
+                    fun () -> T end
+                   ])
+         end]},
+       fun () -> T end]).
 
-expand_qquote([StartPos, Text, Env], T, _) ->
+expand_quote([StartPos, Text, Env], T, _) ->
     case erl_syntax:is_literal(StartPos) of
         true ->
-            expand_qquote([Text, Env], T, erl_syntax:concrete(StartPos));
+            expand_quote([Text, Env], T, erl_syntax:concrete(StartPos));
         false ->
             T
     end;
-expand_qquote([Text, Env], T, StartPos) ->
+expand_quote([Text, Env], T, StartPos) ->
     case erl_syntax:is_literal(Text) of
         true ->
             As = [StartPos, erl_syntax:concrete(Text)],
@@ -64,25 +59,14 @@ expand_qquote([Text, Env], T, StartPos) ->
             T
     end.
 
-expand_subst([Pattern, Env], T) ->
+expand_template(F, [Pattern | Args], T) ->
     case erl_syntax:is_literal(Pattern) of
         true ->
             As = [erl_syntax:concrete(Pattern)],
-            [T1] = ?Q("merl:subst(_@pattern, _@env)",
-                      [{pattern, eval_call(merl, template, As, T)},
-                       {env, Env}]),
-            T1;
-        false ->
-            T
-    end.
-
-expand_match([Pattern, Tree], T) ->
-    case erl_syntax:is_literal(Pattern) of
-        true ->
-            As = [erl_syntax:concrete(Pattern)],
-            [T1] = ?Q("merl:match(_@pattern, _@tree)",
-                      [{pattern, eval_call(merl, template, As, T)},
-                       {tree, Tree}]),
+            [T1] = ?Q("merl:_@function(_@pattern, _@args)",
+                      [{function, F},
+                       {pattern, eval_call(merl, template, As, T)},
+                       {args, Args}]),
             T1;
         false ->
             T
