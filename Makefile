@@ -1,6 +1,6 @@
 # simple Makefile
 VSN=0.9
-ERLC_FLAGS=-pa ./ebin
+ERLC_FLAGS=
 SOURCES=$(wildcard src/*.erl)
 HEADERS=$(wildcard src/*.hrl)
 OBJECTS=$(SOURCES:src/%.erl=ebin/%.beam)
@@ -8,15 +8,21 @@ DOC_OPTS={def,{version,\"$(VSN)\"}}
 
 all: $(OBJECTS) test
 ebin/%.beam: src/%.erl $(HEADERS) Makefile
-	erlc $(ERLC_FLAGS) -o ebin/ $<
+	erlc -pz ./priv -pa ./ebin $(ERLC_FLAGS) -o ebin/ $<
 
-# special dependencies due to parse transform
+# additional dependencies due to the parse transform
 ebin/merl_tests.beam ebin/merl_build.beam: \
 	ebin/merl_transform.beam ebin/merl.beam
 
+# special rules and dependencies to apply the transform to itself
+ebin/merl_transform.beam: ebin/merl.beam priv/merl_transform.beam
+priv/merl_transform.beam: src/merl_transform.erl $(HEADERS) Makefile
+	erlc -DMERL_NO_TRANSFORM $(ERLC_FLAGS) -o priv/ $<
 
 clean:
-	-rm $(OBJECTS)
+	-rm -f priv/merl_transform.beam
+	-rm -f $(OBJECTS)
+
 test:
 	erl -noshell -pa ebin \
 	 -eval 'eunit:test("ebin",[])' \

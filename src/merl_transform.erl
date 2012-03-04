@@ -8,11 +8,8 @@
 
 -export([parse_transform/2]).
 
--define(MERL_NO_TRANSFORM, true).
 -include("../include/merl.hrl").
 
-
-%% TODO: apply to self at compile time, one way or another
 
 parse_transform(Forms, _Options) ->
     erl_syntax:revert_forms(
