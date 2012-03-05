@@ -38,28 +38,21 @@ module_forms(#module{name=Name,
                      attributes=As,
                      functions=Fs})
   when is_atom(Name), Name =/= undefined ->
-    ModuleName = term(Name),
-    Module = ?Q("-module('@ModuleName')."),
+    Module = ?Q("-module('@Name@')."),
     Exported = [erl_syntax:arity_qualifier(term(N), term(A))
                 || {N,A} <- ordsets:from_list(Xs)],
     Export = ?Q("-export(['@_Exported'/1])."),
-    Imports = [?Q("-import('@IM', ['@_NAs'/1]).")
+    Imports = [?Q("-import('@M@', ['@_NAs'/1]).")
                || {M, Ns} <- Is,
-                  IM <- [term(M)],
                   NAs <- [[erl_syntax:arity_qualifier(term(N), term(A))
                            || {N,A} <- ordsets:from_list(Ns)]]
               ],
-    Records = [?Q("-record('@RN',{'@_RFs'=[]}).")
+    Records = [?Q("-record('@N@',{'@_RFs'=[]}).")
                || {N,Es} <- lists:reverse(Rs),
-                  RN <- [term(N)],
                   RFs <- [[erl_syntax:record_field(term(F), term(V))
                            || {F,V} <- Es]]
               ],
-    Attrs = [?Q("-'@AN'('@AT').")
-             || {N,T} <- lists:reverse(As),
-                AN <- [term(N)],
-                AT <- [term(T)]
-            ],
+    Attrs = [?Q("-'@N@'('@T@').") || {N,T} <- lists:reverse(As)],
     [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
 
 %% @doc Add a function to a module representation.

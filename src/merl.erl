@@ -391,7 +391,15 @@ meta_template_1(Leaf) ->
 meta_template_2(Var, V) ->
     case atom_to_list(Var) of
         [C|_]=Name when C >= $A, C =< $Z ; C >= $À, C =< $Ş, C /= $× ->
-            erl_syntax:variable(Name);
+            case lists:reverse(Name) of
+                "@"++RevRealName ->
+                    RealName = lists:reverse(RevRealName),
+                    erl_syntax:application(erl_syntax:atom(merl),
+                                           erl_syntax:atom(term),
+                                           [erl_syntax:variable(RealName)]);
+                _ ->
+                    erl_syntax:variable(Name)
+            end;
         _ ->
             erl_syntax:abstract(V)
     end.
