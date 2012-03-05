@@ -225,6 +225,15 @@ match_test_() ->
                                     ?Q("{fee, fie, foe, fum}"))))),
      ?_assertThrow({error, "multiple glob variables"++_},
                    fe(ok(merl:match(?Q("{_@@foo, _@@bar}"),
+                                    ?Q("{fee, fie, foe, fum}"))))),
+     ?_assertEqual([],
+                   fe(ok(merl:match(?Q("{fee, _@@_}"),
+                                    ?Q("{fee, fie, foe, fum}"))))),
+     ?_assertEqual([],
+                   fe(ok(merl:match(?Q("{_@@_, foe, fum}"),
+                                    ?Q("{fee, fie, foe, fum}"))))),
+     ?_assertEqual([{post,"fum"},{pre,"fee"}],
+                   fe(ok(merl:match(?Q("{_@pre, _@@_, _@post}"),
                                     ?Q("{fee, fie, foe, fum}")))))
     ].
 

@@ -287,7 +287,9 @@ parse_5(Ts, Es) ->
 %% Leaves are normal syntax trees, and inner nodes are tuples
 %% {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
-%% integer. {'_'} and {0} work as anonymous variables in matching.
+%% integer. {'_'} and {0} work as anonymous variables in matching. Glob
+%% metavariables are tuples {'*',VarName}, and {'*','_'} and {'*',0} are
+%% anonymous globs.
 
 %% Note that although template() :: tree() | ..., it is implied that these
 %% syntax trees are free from metavariables, so pattern() :: tree() |
@@ -417,13 +419,12 @@ tsubst(Trees, Env) when is_list(Trees) ->
 tsubst(Tree, Env) ->
     subst_1(template(Tree), Env).
 
-%% TODO: different substitutions of group/non-group variables after all?
 subst_1({template, Type, Attrs, Groups}, Env) ->
     Gs1 = [lists:flatten([subst_1(T, Env) || T <- G]) || G <- Groups],
     {template, Type, Attrs, Gs1};
 subst_1({Var}=V, Env) ->
     case lists:keyfind(Var, 1, Env) of
-        {Var, TreeOrTrees} -> TreeOrTrees;
+        {Var, Tree} -> Tree;
         false -> V
     end;
 subst_1({'*',Var}=V, Env) ->
@@ -480,11 +481,6 @@ match_template(Tree1, Tree2, Dict) ->
         false -> throw(error)  % different trees
     end.
 
-%% match_template_1([{Var} | Gs1], [_ | Gs2], Dict)
-%%   when Var =:= '_' ; Var =:= 0 ->
-%%     match_template_1(Gs1, Gs2, Dict);  % anonymous variable
-%% match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
-%%     match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
 match_template_1([G1 | Gs1], [G2 | Gs2], Dict) ->
     match_template_2(G1, G2, match_template_1(Gs1, Gs2, Dict));
 match_template_1([], [], Dict) ->
@@ -512,10 +508,12 @@ match_glob([{Var} | Ts1], [_ | Ts2], Var, Dict)
     match_glob(Ts1, Ts2, Var, Dict);  % anonymous variable
 match_glob([{Var} | Ts1], [Tree | Ts2], Var, Dict) ->
     match_glob(Ts1, Ts2, Var, orddict:store(Var, Tree, Dict));
-match_glob([{'*',_} | _], _, _, _) ->
-    fail("multiple glob variables in same match group not allowed");
+match_glob([{'*',Var} | _], _, _, _) ->
+    fail("multiple glob variables in same match group: ~w", [Var]);
 match_glob([T1 | Ts1], [T2 | Ts2], Var, Dict) ->
     match_glob(Ts1, Ts2, Var, match_template(T1, T2, Dict));
+match_glob([], _Group, Var, Dict) when Var =:= '_' ; Var =:= 0 ->
+    Dict;  % anonymous glob variable
 match_glob([], Group, Var, Dict) ->
     orddict:store(Var, lists:reverse(Group), Dict);
 match_glob(_, _, _, _Dict) ->
