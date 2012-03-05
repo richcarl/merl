@@ -391,12 +391,11 @@ tree_1(Leaf) ->
 -spec subst(pattern() | [pattern()], env()) -> tree() | [tree()].
 
 %% @doc Substitute metavariables in a pattern or list of patterns, yielding
-%% a syntax tree or list of trees as result. For a non-group metavariable,
-%% the substituted value may be a single element or a list of elements, and
-%% the resulting group is the concatenation of all the elements. For
-%% example, if a list representing "1, 2, 3" is substituted for 'var' in
-%% "[foo, _@var, bar]", the result represents "[foo, 1, 2, 3, bar]". For
-%% group metavariables, the substituted value must always be a list.
+%% a syntax tree or list of trees as result. Both for normal metavariables
+%% and glob metavariables, the substituted value may be a single element or
+%% a list of elements. For example, if a list representing `1, 2, 3' is
+%% substituted for `var' in either of `[foo, _@var, bar]' or `[foo, _@@var,
+%% bar]', the result represents `[foo, 1, 2, 3, bar]'.
 
 subst(Trees, Env) when is_list(Trees) ->
     [subst_0(T, Env) || T <- Trees];
@@ -424,7 +423,7 @@ subst_1({template, Type, Attrs, Groups}, Env) ->
     {template, Type, Attrs, Gs1};
 subst_1({Var}=V, Env) ->
     case lists:keyfind(Var, 1, Env) of
-        {Var, Tree} -> Tree;
+        {Var, TreeOrTrees} -> TreeOrTrees;
         false -> V
     end;
 subst_1({'*',Var}=V, Env) ->
@@ -681,9 +680,9 @@ tag(Name) ->
 %% starting with `@', variables starting with `_@', or integers starting
 %% with `909'. Following the prefix, one or more `_' or `0' characters may
 %% be used to indicate "lifting" of the variable one or more levels, and
-%% after that, a `@' or `9' character indicates a group metavariable rather
-%% than a node metavariable. If the name after the prefix is `_' or `0', the
-%% variable is treated as an anonymous catch-all pattern in matches.
+%% after that, a `@' or `9' character indicates a glob metavariable rather
+%% than a normal metavariable. If the name after the prefix is `_' or `0',
+%% the variable is treated as an anonymous catch-all pattern in matches.
 
 check_meta(Tree) ->
     case erl_syntax:type(Tree) of
