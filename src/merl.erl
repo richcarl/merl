@@ -287,8 +287,7 @@ parse_5(Ts, Es) ->
 %% Leaves are normal syntax trees, and inner nodes are tuples
 %% {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
-%% integer, and can exist both on the group level and the node level. {'_'}
-%% and {0} work as anonymous variables in matching.
+%% integer. {'_'} and {0} work as anonymous variables in matching.
 
 %% Note that although template() :: tree() | ..., it is implied that these
 %% syntax trees are free from metavariables, so pattern() :: tree() |
@@ -296,6 +295,7 @@ parse_5(Ts, Es) ->
 
 -opaque template() :: tree()
                     | {id()}
+                    | {'*',id()}
                     | {template, atom(), term(), [[template()]]}.
 
 template(Trees) when is_list(Trees) ->
@@ -304,6 +304,7 @@ template(Tree) ->
     template_0(Tree).
 
 template_0({template, _, _, _}=Template) -> Template;
+template_0({'*',_}=Template) -> Template;
 template_0({_}=Template) -> Template;
 template_0(Tree) ->
     case template_1(Tree) of
@@ -317,10 +318,10 @@ template_1(Tree) ->
     case erl_syntax:subtrees(Tree) of
         [] ->
             case check_meta(Tree) of
-                {"@"++Cs}=V when Cs =/= [] -> V;
-                {"9"++Cs}=V when Cs =/= [] -> V;
                 {"_"++Cs}=V when Cs =/= [] -> V;
                 {"0"++Cs}=V when Cs =/= [] -> V;
+                {"@"++Name} when Name =/= [] -> {'*',tag(Name)};
+                {"9"++Name} when Name =/= [] -> {'*',tag(Name)};
                 {Name} -> {tag(Name)};
                 false -> false
             end;
@@ -336,28 +337,19 @@ template_1(Tree) ->
 
 template_2([G | Gs], As, Bool) ->
     case template_3(G, [], false) of
-        {"@"++Cs}=V when Cs =/= [] -> V;
-        {"9"++Cs}=V when Cs =/= [] -> V;
-        {"_"++Cs}=V when Cs =/= [] -> V;
-        {"0"++Cs}=V when Cs =/= [] -> V;
-        {Name} when is_list(Name) -> {tag(Name)};
+        {"_"++Cs}=V when Cs =/= [] -> V;  % lift further
+        {"0"++Cs}=V when Cs =/= [] -> V;  % lift further
+        {"@"++Name} when Name =/= [] -> {'*',tag(Name)};  % lifted to here
+        {"9"++Name} when Name =/= [] -> {'*',tag(Name)};  % lifted to here
+        {Name} when is_list(Name) -> {tag(Name)};  % lifted to here
         false -> template_2(Gs, [G | As], Bool);
         G1 -> template_2(Gs, [G1 | As], true)
     end;
 template_2([], _As, false) -> false;
 template_2([], As, true) -> lists:reverse(As).
 
-%% TODO: mix group metavars with other elements for pattern matching?
-
-%% lifted and group metavariables are only allowed as the only member of
-%% their group, so as to not quietly discard the other members
-
 template_3([T | Ts], As, Bool) ->
     case template_1(T) of
-        {"@"++Name} when Ts =/= [] ; As =/= [] -> fail_group(Name);
-        {"@"++Name} -> {tag(Name)};
-        {"9"++Name} when Ts =/= [] ; As =/= [] -> fail_group(Name);
-        {"9"++Name} -> {tag(Name)};
         {"_"++Cs} when Cs =/= [] -> {Cs};  % lift
         {"0"++Cs} when Cs =/= [] -> {Cs};  % lift
         false -> template_3(Ts, [T | As], Bool);
@@ -365,9 +357,6 @@ template_3([T | Ts], As, Bool) ->
     end;
 template_3([], _As, false) -> false;
 template_3([], As, true) -> lists:reverse(As).
-
-fail_group(Name) ->
-    fail("group metavariable must be alone in group: '~s'", [Name]).
 
 
 -spec tree(template() | [template()]) -> tree() | [tree()].
@@ -383,20 +372,16 @@ tree(Template) ->
     tree_1(Template).
 
 tree_1({template, Type, Attrs, Groups}) ->
-    Gs = [case G of
-              {Var} when is_atom(Var) ->
-                  [erl_syntax:atom(tag("@@"++atom_to_list(Var)))];
-              {Var} when is_integer(Var) ->
-                  [erl_syntax:integer(tag("9099"++integer_to_list(Var)))];
-              _ ->
-                  [tree_1(T) || T <- G]
-          end
-          || G <- Groups],
+    Gs = [[tree_1(T) || T <- G] || G <- Groups],
     erl_syntax:set_attrs(erl_syntax:make_tree(Type, Gs), Attrs);
 tree_1({Var}) when is_atom(Var) ->
-    erl_syntax:atom("@"++atom_to_list(Var));
+    erl_syntax:atom(list_to_atom("@"++atom_to_list(Var)));
 tree_1({Var}) when is_integer(Var) ->
-    erl_syntax:integer(tag("909"++integer_to_list(Var)));
+    erl_syntax:integer(list_to_integer("909"++integer_to_list(Var)));
+tree_1({'*',Var}) when is_atom(Var) ->
+    erl_syntax:atom(list_to_atom("@@"++atom_to_list(Var)));
+tree_1({'*',Var}) when is_integer(Var) ->
+    erl_syntax:integer(list_to_integer("9099"++integer_to_list(Var)));
 tree_1(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
@@ -419,6 +404,7 @@ subst(Tree, Env) ->
 subst_0(Tree, Env) ->
     tree_1(subst_1(template(Tree), Env)).
 
+
 -spec tsubst(pattern() | [pattern()], env()) -> template() | [template()].
 
 %% @doc Like subst/2, but does not convert the result from a template back
@@ -431,24 +417,16 @@ tsubst(Trees, Env) when is_list(Trees) ->
 tsubst(Tree, Env) ->
     subst_1(template(Tree), Env).
 
+%% TODO: different substitutions of group/non-group variables after all?
 subst_1({template, Type, Attrs, Groups}, Env) ->
-    Gs1 = [case G of
-               {Var}=V ->
-                   case lists:keyfind(Var, 1, Env) of
-                       {Var, G1} when is_list(G1) ->
-                           G1;
-                       {Var, _} ->
-                           fail("value of group metavariable "
-                                "must be a list: '~s'", [Var]);
-                       false ->
-                           V
-                   end;
-               _ ->
-                   lists:flatten([subst_1(T, Env) || T <- G])
-           end
-           || G <- Groups],
+    Gs1 = [lists:flatten([subst_1(T, Env) || T <- G]) || G <- Groups],
     {template, Type, Attrs, Gs1};
 subst_1({Var}=V, Env) ->
+    case lists:keyfind(Var, 1, Env) of
+        {Var, TreeOrTrees} -> TreeOrTrees;
+        false -> V
+    end;
+subst_1({'*',Var}=V, Env) ->
     case lists:keyfind(Var, 1, Env) of
         {Var, TreeOrTrees} -> TreeOrTrees;
         false -> V
@@ -490,9 +468,8 @@ match_template({template, Type, _, Gs}, Tree, Dict) ->
         Type -> match_template_1(Gs, erl_syntax:subtrees(Tree), Dict);
         _ -> throw(error)  % type mismatch
     end;
-match_template({'_'}, _Tree, Dict) ->
-    Dict;  % anonymous variable
-match_template({0}, _Tree, Dict) ->
+match_template({Var}, _Tree, Dict)
+  when Var =:= '_' ; Var =:= 0 ->
     Dict;  % anonymous variable
 match_template({Var}, Tree, Dict) ->
     orddict:store(Var, Tree, Dict);
@@ -503,12 +480,11 @@ match_template(Tree1, Tree2, Dict) ->
         false -> throw(error)  % different trees
     end.
 
-match_template_1([{'_'} | Gs1], [_ | Gs2], Dict) ->
-    match_template_1(Gs1, Gs2, Dict);  % anonymous variable
-match_template_1([{0} | Gs1], [_ | Gs2], Dict) ->
-    match_template_1(Gs1, Gs2, Dict);  % anonymous variable
-match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
-    match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
+%% match_template_1([{Var} | Gs1], [_ | Gs2], Dict)
+%%   when Var =:= '_' ; Var =:= 0 ->
+%%     match_template_1(Gs1, Gs2, Dict);  % anonymous variable
+%% match_template_1([{Var} | Gs1], [Group | Gs2], Dict) ->
+%%     match_template_1(Gs1, Gs2, orddict:store(Var, Group, Dict));
 match_template_1([G1 | Gs1], [G2 | Gs2], Dict) ->
     match_template_2(G1, G2, match_template_1(Gs1, Gs2, Dict));
 match_template_1([], [], Dict) ->
@@ -516,18 +492,35 @@ match_template_1([], [], Dict) ->
 match_template_1(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
-match_template_2([{'_'} | Ts1], [_ | Ts2], Dict) ->
-    match_template_2(Ts1, Ts2, Dict);  % anonymous variable
-match_template_2([{0} | Ts1], [_ | Ts2], Dict) ->
+match_template_2([{Var} | Ts1], [_ | Ts2], Dict)
+  when Var =:= '_' ; Var =:= 0 ->
     match_template_2(Ts1, Ts2, Dict);  % anonymous variable
 match_template_2([{Var} | Ts1], [Tree | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, orddict:store(Var, Tree, Dict));
+match_template_2([{'*',Var} | Ts1], Ts2, Dict) ->
+    match_glob(lists:reverse(Ts1), lists:reverse(Ts2), Var, Dict);
 match_template_2([T1 | Ts1], [T2 | Ts2], Dict) ->
     match_template_2(Ts1, Ts2, match_template(T1, T2, Dict));
 match_template_2([], [], Dict) ->
     Dict;
 match_template_2(_, _, _Dict) ->
     throw(error).  % shape mismatch
+
+%% match the tails in reverse order; no further globs allowed
+match_glob([{Var} | Ts1], [_ | Ts2], Var, Dict)
+  when Var =:= '_' ; Var =:= 0 ->
+    match_glob(Ts1, Ts2, Var, Dict);  % anonymous variable
+match_glob([{Var} | Ts1], [Tree | Ts2], Var, Dict) ->
+    match_glob(Ts1, Ts2, Var, orddict:store(Var, Tree, Dict));
+match_glob([{'*',_} | _], _, _, _) ->
+    fail("multiple glob variables in same match group not allowed");
+match_glob([T1 | Ts1], [T2 | Ts2], Var, Dict) ->
+    match_glob(Ts1, Ts2, Var, match_template(T1, T2, Dict));
+match_glob([], Group, Var, Dict) ->
+    orddict:store(Var, lists:reverse(Group), Dict);
+match_glob(_, _, _, _Dict) ->
+    throw(error).  % shape mismatch
+
 
 %% compare two syntax trees for equivalence
 compare_trees(T1, T2) ->
