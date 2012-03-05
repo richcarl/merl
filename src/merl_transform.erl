@@ -90,7 +90,7 @@ eval_call(F, As, T) ->
         throw:_Reason -> T
     end.
 
-is_inline_metavar({Var}) when is_atom(Var) ->
+is_inline_metavar(Var) when is_atom(Var) ->
     is_erlang_var(atom_to_list(Var));
 is_inline_metavar(_) -> false.
 

@@ -408,7 +408,7 @@ template_vars(Template, Vars) ->
     template_vars_1(Template, Vars).
 
 template_vars_1({template, _, _, Groups}, Vars) ->
-    lists:foldl(fun (G, D) -> lists:foldl(fun template_vars_1/2, G, D) end,
+    lists:foldl(fun (G, V) -> lists:foldl(fun template_vars_1/2, V, G) end,
                 Vars, Groups);
 template_vars_1({Var}, Vars) ->
     ordsets:add_element(Var, Vars);

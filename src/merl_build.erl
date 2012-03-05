@@ -38,25 +38,28 @@ module_forms(#module{name=Name,
                      attributes=As,
                      functions=Fs})
   when is_atom(Name), Name =/= undefined ->
-    Module = ?Q("-module('@name').", [{name,term(Name)}]),
-    Export = ?Q("-export(['@_@name'/1]).",
-                [{name, [erl_syntax:arity_qualifier(term(N), term(A))
-                         || {N,A} <- ordsets:from_list(Xs)]}]),
-    Imports = [?Q("-import('@module', ['@_@name'/1]).",
-                  [{module,term(M)},
-                   {name,[erl_syntax:arity_qualifier(term(N),
-                                                     term(A))
-                          || {N,A} <- ordsets:from_list(Ns)]}])
-               || {M, Ns} <- Is],
-    Records = [?Q("-record('@name',{'@_@fields'}).",
-                  [{name,term(N)},
-                   {fields,[erl_syntax:record_field(term(F),
-                                                    term(V))
-                            || {F,V} <- Es]}])
-               || {N,Es} <- lists:reverse(Rs)],
-    Attrs = [?Q("-'@name'('@term').",
-                [{name,term(N)}, {term,term(T)}])
-             || {N,T} <- lists:reverse(As)],
+    ModuleName = term(Name),
+    Module = ?Q("-module('@ModuleName')."),
+    Exported = [erl_syntax:arity_qualifier(term(N), term(A))
+                || {N,A} <- ordsets:from_list(Xs)],
+    Export = ?Q("-export(['@_Exported'/1])."),
+    Imports = [?Q("-import('@IM', ['@_NAs'/1]).")
+               || {M, Ns} <- Is,
+                  IM <- [term(M)],
+                  NAs <- [[erl_syntax:arity_qualifier(term(N), term(A))
+                           || {N,A} <- ordsets:from_list(Ns)]]
+              ],
+    Records = [?Q("-record('@RN',{'@_RFs'=[]}).")
+               || {N,Es} <- lists:reverse(Rs),
+                  RN <- [term(N)],
+                  RFs <- [[erl_syntax:record_field(term(F), term(V))
+                           || {F,V} <- Es]]
+              ],
+    Attrs = [?Q("-'@AN'('@AT').")
+             || {N,T} <- lists:reverse(As),
+                AN <- [term(N)],
+                AT <- [term(T)]
+            ],
     [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
 
 %% @doc Add a function to a module representation.
