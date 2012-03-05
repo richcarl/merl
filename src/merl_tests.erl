@@ -285,3 +285,20 @@ switch_test_() ->
                                   fun fe/1]},
                                 fun () -> 42 end]))
     ].
+
+-ifndef(MERL_NO_TRANSFORM).
+
+inline_meta_test_() ->
+    [?_assertEqual("{foo}",
+                   f(begin
+                         Foo = ?Q("foo"),
+                         ?Q("{_@Foo}")
+                     end)),
+     ?_assertEqual("{foo, '@bar'}",
+                   f(begin
+                         Foo = ?Q("foo"),
+                         ?Q("{_@Foo,_@bar}")
+                     end))
+    ].
+
+-endif.

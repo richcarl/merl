@@ -11,6 +11,8 @@
 
 -export([template/1, tree/1, subst/2, tsubst/2, match/2, switch/2]).
 
+-export([template_vars/1, meta_template/1]).
+
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
          add_import/3, add_attribute/3]).
 
@@ -361,6 +363,61 @@ template_3([], _As, false) -> false;
 template_3([], As, true) -> lists:reverse(As).
 
 
+%% @doc Turn a template into a syntax tree representing the template.
+%% Meta-variables in the template are turned into normal Erlang variables if
+%% their names (after the metavariable prefix characters) begin with an
+%% uppercase character. E.g., `_@Foo' in the template becomes the variable
+%% `Foo' in the meta-template.
+
+meta_template(Templates) when is_list(Templates) ->
+    [meta_template_1(T) || T <- Templates];
+meta_template(Template) ->
+    meta_template_1(Template).
+
+meta_template_1({template, Type, Attrs, Groups}) ->
+    erl_syntax:tuple(
+      [erl_syntax:atom(template),
+       erl_syntax:atom(Type),
+       erl_syntax:abstract(Attrs),
+       erl_syntax:list([erl_syntax:list([meta_template_1(T) || T <- G])
+                        || G <- Groups])]);
+meta_template_1({Var}=V) when is_atom(Var) ->
+    meta_template_2(Var, V);
+meta_template_1({'*',Var}=V) when is_atom(Var) ->
+    meta_template_2(Var, V);
+meta_template_1(Leaf) ->
+    erl_syntax:abstract(Leaf).
+
+meta_template_2(Var, V) ->
+    case atom_to_list(Var) of
+        [C|_]=Name when C >= $A, C =< $Z ; C >= $À, C =< $Ş, C /= $× ->
+            erl_syntax:variable(Name);
+        _ ->
+            erl_syntax:abstract(V)
+    end.
+
+
+%% @doc Return an ordered list of the metavariables in the template.
+
+template_vars(Template) ->
+    template_vars(Template, []).
+
+template_vars(Templates, Vars) when is_list(Templates) ->
+    lists:foldl(fun template_vars_1/2, Vars, Templates);
+template_vars(Template, Vars) ->
+    template_vars_1(Template, Vars).
+
+template_vars_1({template, _, _, Groups}, Vars) ->
+    lists:foldl(fun (G, D) -> lists:foldl(fun template_vars_1/2, G, D) end,
+                Vars, Groups);
+template_vars_1({Var}, Vars) ->
+    ordsets:add_element(Var, Vars);
+template_vars_1({'*',Var}, Vars) ->
+    ordsets:add_element(Var, Vars);
+template_vars_1(_, Vars) ->
+    Vars.
+
+
 -spec tree(template() | [template()]) -> tree() | [tree()].
 
 %% @doc Revert a template to a normal syntax tree. Any remaining
@@ -374,7 +431,8 @@ tree(Template) ->
     tree_1(Template).
 
 tree_1({template, Type, Attrs, Groups}) ->
-    Gs = [[tree_1(T) || T <- G] || G <- Groups],
+    %% flattening here is needed for templates created via source transforms
+    Gs = [lists:flatten([tree_1(T) || T <- G]) || G <- Groups],
     erl_syntax:set_attrs(erl_syntax:make_tree(Type, Gs), Attrs);
 tree_1({Var}) when is_atom(Var) ->
     erl_syntax:atom(list_to_atom("@"++atom_to_list(Var)));
@@ -616,7 +674,7 @@ switch(_Tree, _) ->
     erlang:error(merl_switch_badarg).
 
 switch_1(Tree, Pattern, Body, Cs) ->
-    case merl:match(Pattern, Tree) of
+    case match(Pattern, Tree) of
         {ok, Env} ->
             case Body of
                 List when is_list(List) ->

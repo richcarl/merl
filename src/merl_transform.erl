@@ -27,7 +27,7 @@ transform(T) ->
           end,
           fun ([{args, As}, {function, F}]) ->
                   [F1|As1] = lists:map(fun erl_syntax:concrete/1, [F|As]),
-                  eval_call(merl, F1, As1, T)
+                  eval_call(F1, As1, T)
           end},
          fun ([{args, As}, {function, F}]) ->
                  merl:switch(
@@ -53,7 +53,7 @@ expand_quote([Text, Env], T, StartPos) ->
             As = [StartPos, erl_syntax:concrete(Text)],
             % keep expanding if possible
             transform(?Q("merl:subst(_@tree, _@env)",
-                         [{tree, eval_call(merl, quote, As, T)},
+                         [{tree, eval_call(quote, As, T)},
                           {env, Env}]));
         false ->
             T
@@ -65,15 +65,36 @@ expand_template(F, [Pattern | Args], T) ->
             As = [erl_syntax:concrete(Pattern)],
             ?Q("merl:_@function(_@pattern, _@args)",
                [{function, F},
-                {pattern, eval_call(merl, template, As, T)},
+                {pattern, eval_call(template, As, T)},
                 {args, Args}]);
         false ->
             T
     end.
 
-eval_call(M, F, As, T) ->
-    try apply(M, F, As) of
-        T1 -> merl:term(T1)
+eval_call(F, As, T) ->
+    try apply(merl, F, As) of
+        T1 when F =:= quote ->
+            %% lift metavariables in a template to Erlang variables
+            Template = merl:template(T1),
+            Vars = merl:template_vars(Template),
+            case lists:any(fun is_inline_metavar/1, Vars) of
+                true ->
+                    ?Q("merl:tree(_@template)",
+                       [{template, merl:meta_template(Template)}]);
+                false ->
+                    merl:term(T1)
+            end;
+        T1 ->
+            merl:term(T1)
     catch
         throw:_Reason -> T
     end.
+
+is_inline_metavar({Var}) when is_atom(Var) ->
+    is_erlang_var(atom_to_list(Var));
+is_inline_metavar(_) -> false.
+
+is_erlang_var([C|_]) when C >= $A, C =< $Z ; C >= $À, C =< $Þ, C /= $× ->
+    true;
+is_erlang_var(_) ->
+    false.
