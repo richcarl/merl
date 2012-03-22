@@ -8,6 +8,8 @@
 
 -export([parse_transform/2]).
 
+%% NOTE: We cannot use inline metavariables in this module, because it must
+%% be possible to compile it with the parse transform disabled!
 -include("../include/merl.hrl").
 
 
@@ -78,6 +80,9 @@ eval_call(F, As, T) ->
             Template = merl:template(T1),
             Vars = merl:template_vars(Template),
             case lists:any(fun is_inline_metavar/1, Vars) of
+                true when is_list(T1) ->
+                    ?Q("merl:tree([_@template])",
+                       [{template, merl:meta_template(Template)}]);
                 true ->
                     ?Q("merl:tree(_@template)",
                        [{template, merl:meta_template(Template)}]);

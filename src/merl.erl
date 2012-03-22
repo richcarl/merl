@@ -751,12 +751,13 @@ tag(Name) ->
 -spec check_meta(tree()) -> {string()} | false.
 
 %% Check if a syntax tree represents a metavariable. Metavariables are atoms
-%% starting with `@', variables starting with `_@', or integers starting
-%% with `909'. Following the prefix, one or more `_' or `0' characters may
-%% be used to indicate "lifting" of the variable one or more levels, and
-%% after that, a `@' or `9' character indicates a glob metavariable rather
-%% than a normal metavariable. If the name after the prefix is `_' or `0',
-%% the variable is treated as an anonymous catch-all pattern in matches.
+%% starting with `@', variables starting with `_@', strings starting with
+%% ``"'@'', or integers starting with `909'. Following the prefix, one or
+%% more `_' or `0' characters may be used to indicate "lifting" of the
+%% variable one or more levels, and after that, a `@' or `9' character
+%% indicates a glob metavariable rather than a normal metavariable. If the
+%% name after the prefix is `_' or `0', the variable is treated as an
+%% anonymous catch-all pattern in matches.
 
 check_meta(Tree) ->
     case erl_syntax:type(Tree) of
@@ -779,5 +780,11 @@ check_meta(Tree) ->
                     end;
                 _ -> false
             end;
-        _ -> false
+        string ->
+            case erl_syntax:string_value(Tree) of
+                "'@" ++ Cs -> {Cs};
+                _ -> false
+            end;
+        _ ->
+            false
     end.

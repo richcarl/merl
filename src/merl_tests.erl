@@ -115,7 +115,9 @@ quote_case_clause_test_() ->
                          "_ -> 0"])))].
 
 metavar_test_() ->
-    [?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("_@foo"))))),
+    [?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("'@foo'"))))),
+     ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("_@foo"))))),
+     ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("\"'@foo\""))))),
      ?_assertEqual("9090", f(merl:tree(merl:template(?Q("_@0"))))),
      ?_assertEqual("90917", f(merl:tree(merl:template(?Q("_@17"))))),
      ?_assertEqual("{'@foo'}", f(merl:tree(merl:template(?Q("{_@foo}"))))),
@@ -132,9 +134,10 @@ metavar_test_() ->
     ].
 
 subst_test_() ->
-    [?_assertEqual("42", f(merl:subst(?Q("_@foo"),
-                                      [{foo, merl:term(42)}]))),
-     ?_assertEqual("'@foo'", f(merl:subst(?Q("_@foo"), []))),
+    [?_assertEqual("42",
+                   f(merl:subst(?Q("_@foo"), [{foo, merl:term(42)}]))),
+     ?_assertEqual("'@foo'",
+                   f(merl:subst(?Q("_@foo"), []))),
      ?_assertEqual("{42}",
                    f(merl:subst(?Q("{_@foo}"),
                                 [{foo, merl:term(42)}]))),
@@ -298,6 +301,19 @@ inline_meta_test_() ->
                    f(begin
                          Foo = ?Q("foo"),
                          ?Q("{_@Foo,_@bar}")
+                     end))
+    ].
+
+inline_meta_autoabstract_test_() ->
+    [?_assertEqual("{foo}",
+                   f(begin
+                         Foo = foo,
+                         ?Q("{_@Foo@}")
+                     end)),
+     ?_assertEqual("{foo, '@bar@'}",
+                   f(begin
+                         Foo = foo,
+                         ?Q("{_@Foo@,_@bar@}")
                      end))
     ].
 
