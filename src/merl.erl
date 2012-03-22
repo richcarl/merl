@@ -84,9 +84,6 @@ compile(Code, Options) when not is_list(Code)->
 compile(Code, Options0) when is_list(Options0) ->
     Forms = [erl_syntax:revert(F) || F <- Code],
     Options = [verbose, report_errors, report_warnings, binary | Options0],
-    %% Note: modules compiled from forms will have a '.' as the last character
-    %% in the string given by proplists:get_value(source,
-    %% erlang:get_module_info(ModuleName, compile)).
     compile:noenv_forms(Forms, Options).
 
 
