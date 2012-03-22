@@ -6,28 +6,30 @@
 -module(merl_build).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
-         add_import/3, add_attribute/3]).
+         add_import/3, add_attribute/3, set_file/2]).
 
 -import(merl, [term/1]).
 
 -include("../include/merl.hrl").
 
+-type filename() :: string().
 
 -record(module, { name          :: atom()
+                , file          :: filename()
                 , exports=[]    :: [{atom(), integer()}]
                 , imports=[]    :: [{atom(), [{atom(), integer()}]}]
-                , records=[]    :: [{atom(), [{atom(), term()}]}]
-                , attributes=[] :: [{atom(), [term()]}]
-                , functions=[]  :: [{atom(), {[term()],[term()],[term()]}}]
+                , attributes=[] :: [{filename(), {atom(), [term()]}}]
+                , records=[]    :: [{filename(),
+                                     {atom(), [{atom(), merl:tree()}]}}]
+                , functions=[]  :: [{filename(), merl:tree()}]
                 }).
 
 %% TODO: init module from a list of forms (from various sources)
 
 %% @doc Create a new module representation, using the given module name.
 init_module(Name) when is_atom(Name) ->
-    #module{name=Name}.
-
-%% TODO: setting current file (between forms)
+    %% use the module name as the default file name - better than nothing
+    #module{name=Name, file=atom_to_list(Name)}.
 
 %% @doc Get the list of syntax tree forms for a module representation. This can
 %% be passed to compile/2.
@@ -47,16 +49,22 @@ module_forms(#module{name=Name,
                   NAs <- [[erl_syntax:arity_qualifier(term(N), term(A))
                            || {N,A} <- ordsets:from_list(Ns)]]
               ],
-    Records = [?Q("-record('@N@',{'@_RFs'=[]}).")
-               || {N,Es} <- lists:reverse(Rs),
-                  RFs <- [[erl_syntax:record_field(term(F), term(V))
+    Attrs = [?Q("-file(@File@,1). -'@N@'('@T@').")
+             || {File, {N,T}} <- lists:reverse(As)],
+    Records = [?Q("-file(@File@,1). -record('@N@',{'@_RFs'=[]}).")
+               || {File, {N,Es}} <- lists:reverse(Rs),
+                  RFs <- [[erl_syntax:record_field(term(F), V)
                            || {F,V} <- Es]]
               ],
-    Attrs = [?Q("-'@N@'('@T@').") || {N,T} <- lists:reverse(As)],
-    [Module, Export | Imports ++ Records ++ Attrs ++ lists:reverse(Fs)].
+    Functions = [?Q("-file(@File@,1). '@_F@'() -> [].")
+                 || {File, {N,Cs}} <- lists:reverse(As),
+                    F = erl_syntax:function(term(N), Cs)],
+    lists:flatten([Module, Export, Imports, lists:reverse(Attrs),
+                   lists:reverse(Records), lists:reverse(Fs)]).
 
 %% @doc Add a function to a module representation.
-add_function(Exported, Name, Clauses, #module{exports=Xs, functions=Fs}=M)
+add_function(Exported, Name, Clauses,
+             #module{file=File, exports=Xs, functions=Fs}=M)
   when is_boolean(Exported), is_atom(Name), Clauses =/= [] ->
     Arity = length(erl_syntax:clause_patterns(hd(Clauses))),
     Xs1 = case Exported of
@@ -64,7 +72,8 @@ add_function(Exported, Name, Clauses, #module{exports=Xs, functions=Fs}=M)
               false -> Xs
           end,
     M#module{exports=Xs1,
-             functions=[erl_syntax:function(term(Name), Clauses) | Fs]}.
+             functions=[{File, erl_syntax:function(term(Name), Clauses)}
+                        | Fs]}.
 
 %% @doc Add an import declaration to a module representation.
 add_import(From, Names, #module{imports=Is}=M)
@@ -72,10 +81,15 @@ add_import(From, Names, #module{imports=Is}=M)
     M#module{imports=[{From, Names} | Is]}.
 
 %% @doc Add a record declaration to a module representation.
-add_record(Name, Fs, #module{records=Rs}=M) when is_atom(Name) ->
-    M#module{records=[{Name, Fs} | Rs]}.
+add_record(Name, Fields, #module{records=Rs}=M) when is_atom(Name) ->
+    M#module{records=[{Name, Fields} | Rs]}.
 
 %% @doc Add a "wild" attribute, such as `-compile(Opts)' to a module
 %% representation. Note that such attributes can only have a single argument.
 add_attribute(Name, Term, #module{attributes=As}=M) when is_atom(Name) ->
     M#module{attributes=[{Name, Term} | As]}.
+
+%% @doc Set the source file name for all subsequently added functions,
+%% records, and attributes.
+set_file(Filename, #module{}=M) ->
+    M#module{file=filename:flatten(Filename)}.

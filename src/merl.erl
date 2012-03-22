@@ -5,7 +5,7 @@
 
 -module(merl).
 
--export([term/1, var/1]).
+-export([term/1, var/1, set_pos/2]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
@@ -14,7 +14,7 @@
 -export([template_vars/1, meta_template/1]).
 
 -export([init_module/1, module_forms/1, add_function/4, add_record/3,
-         add_import/3, add_attribute/3]).
+         add_import/3, add_attribute/3, set_file/2]).
 
 -export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
@@ -60,6 +60,9 @@ add_record(Name, Fs, Module) ->
 
 add_attribute(Name, Term, Module) ->
     merl_build:add_attribute(Name, Term, Module).
+
+set_file(Filename, Module) ->
+    merl_build:set_file(Filename, Module).
 
 
 %% ------------------------------------------------------------------------
@@ -107,8 +110,6 @@ compile_and_load(Code, Options) ->
 %% ------------------------------------------------------------------------
 %% Utility functions
 
-%% TODO: setting line numbers
-
 
 -spec var(atom()) -> tree().
 
@@ -126,10 +127,15 @@ term(Term) ->
     erl_syntax:abstract(Term).
 
 
+%% @doc Set the position information on all nodes in a syntax tree.
+%% @see erl_syntax:set_pos/2
+
+set_pos(Tree, Pos) ->
+    erl_syntax_lib:map(fun (T) -> set_pos(T,Pos) end, Tree).
+
+
 %% ------------------------------------------------------------------------
 %% Parsing and instantiating code fragments
-
-%% TODO: setting source line statically vs. dynamically (Erlang vs. DSL source)
 
 
 -spec qquote(Text::text(), Env::env()) -> tree() | [tree()].
@@ -368,6 +374,8 @@ template_3([], As, true) -> lists:reverse(As).
 %% their names (after the metavariable prefix characters) begin with an
 %% uppercase character. E.g., `_@Foo' in the template becomes the variable
 %% `Foo' in the meta-template.
+
+%% TODO: line number info on all the generated code (file not part of pos!)
 
 meta_template(Templates) when is_list(Templates) ->
     [meta_template_1(T) || T <- Templates];
