@@ -53,8 +53,8 @@ quote_form_test_() ->
      ?_assertEqual(("-module(foo)."
                     "-export([f/1])."
                     "f(X) -> {ok, X}."),
-                   f(?Q(["-module(foo).\n",
-                         "-export([f/1]).\n",
+                   f(?Q(["-module(foo).",
+                         "-export([f/1]).",
                          "f(X) -> {ok, X}."])))
     ].
 
