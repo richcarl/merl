@@ -3,7 +3,7 @@
 %% @copyright 2012 Richard Carlsson
 %% @doc Lisp compiler in Erlang.
 
--module(lisp_final).
+-module(lispc).
 
 -export([eval/1]).
 
