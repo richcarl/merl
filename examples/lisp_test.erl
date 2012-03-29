@@ -43,13 +43,13 @@ interpreter_basics_test_() ->
      ?_assertMatch({builtin,_}, eval(print)),
      ?_assertThrow(bad_do, eval([do])),
      ?_assertThrow(bad_apply, eval([apply])),
-     ?_assertThrow({undefined, foo}, eval([def, bar, 17, foo])),
+     ?_assertThrow({undefined, foo}, eval([def, bar, 17, foo]))
     ].
 
 interpreter_lambda_test_() ->
     [?_assertMatch({lambda,_,_,_}, eval([lambda, [], 42])),
      ?_assertMatch({lambda,_,_,_}, eval([lambda, [x], x])),
-     ?_assertMatch({lambda,_,_,_}, eval([lambda, [x,y], 42])),
+     ?_assertMatch({lambda,_,_,_}, eval([lambda, [x,y], 42]))
     ].
 -endif.
 

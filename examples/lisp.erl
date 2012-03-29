@@ -19,18 +19,14 @@ eval(P) ->
     X.
 
 init() ->
-    {Y, _} = eval([lambda, [f],
-                   [[lambda, [x], [f, [lambda, [y], [[x, x], y]]]],
-                    [lambda, [x], [f, [lambda, [y], [[x, x], y]]]]]],
-                  #st{env=dict:new()}),
-    Env = [{print, {builtin, fun print/2}}
-           ,{list, {builtin, fun list/2}}
+    Env = [{print, {builtin, fun do_print/2}}
+           ,{list, {builtin, fun do_list/2}}
            ,{apply, {builtin, fun do_apply/2}}
-           ,{plus, {builtin, fun plus/2}}
+           ,{plus, {builtin, fun do_plus/2}}
            ,{equal, {builtin, fun do_equal/2}}
            ,{gt, {builtin, fun do_gt/2}}
            ,{knot, {builtin, fun do_knot/2}}
-           ,{y, Y}
+           ,{y, y()}
           ],
     #st{env=dict:from_list(Env)}.
 
@@ -58,7 +54,7 @@ eval([iff, X, A, B], St) ->
         {[], St1} -> eval(B, St1);
         {_, St1} -> eval(A, St1)
     end;
-eval([do], St0) ->
+eval([do], _St0) ->
     throw(bad_do);
 eval([do | As], St0) ->
     lists:foldl(fun (X, {_,St}) -> eval(X, St) end, {[],St0}, As);
@@ -69,6 +65,8 @@ eval(A, St) when is_atom(A) ->
     {deref(A, St), St};
 eval(C, St) ->
     {C, St}.
+
+%% UTILITY FUNCTIONS
 
 deref(A, #st{env=E}) ->
     case dict:find(A, E) of
@@ -97,13 +95,22 @@ call(X, _, _) ->
 bool(true) -> 1;
 bool(false) -> [].
 
-print([S | Xs], St) ->
+%% BUILTINS
+
+y() ->
+    {Y, _} = eval([lambda, [f],
+                   [[lambda, [x], [f, [lambda, [y], [[x, x], y]]]],
+                    [lambda, [x], [f, [lambda, [y], [[x, x], y]]]]]],
+                  #st{env=dict:new()}),
+    Y.
+
+do_print([S | Xs], St) ->
     io:format(S, Xs),
     {[], St};
-print(_, _) ->
+do_print(_, _) ->
     throw(bad_print).
 
-list(As, St) ->
+do_list(As, St) ->
     {As, St}.
 
 do_apply([F, As], St) ->
@@ -111,9 +118,9 @@ do_apply([F, As], St) ->
 do_apply(_, _) ->
     throw(bad_apply).
 
-plus([X, Y], St) when is_number(X), is_number(Y) ->
+do_plus([X, Y], St) when is_number(X), is_number(Y) ->
     {X + Y, St};
-plus(As, _) ->
+do_plus(As, _) ->
     throw({bad_plus, As}).
 
 do_equal([X, Y], St) ->

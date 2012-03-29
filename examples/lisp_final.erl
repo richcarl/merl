@@ -18,7 +18,7 @@ eval(Lisp) ->
     tmp:eval().
 
 compile(Lisp, ModName) ->
-    {Code, _} = gen(Lisp, init()),
+    {Code, _} = gen(Lisp, #st{}),
     Main = ?Q(["() ->",
                "  __print = fun (S, Xs) -> io:format(S,Xs), [] end,",
                "  __apply = fun erlang:apply/2,",
@@ -34,16 +34,11 @@ compile(Lisp, ModName) ->
     Forms = merl:module_forms(
               merl:add_function(true, eval, [Main],
                                 merl:init_module(ModName))),
-    write(Forms, ModName),
-    merl:compile_and_load(Forms, [verbose]).
-
-write(Forms, ModName) ->
+    %% Write source to file for debugging
     file:write_file(lists:concat([ModName, "_gen.erl"]),
                     erl_prettypr:format(erl_syntax:form_list(Forms),
-                                        [{paper,160},{ribbon,80}])).
-
-init() ->
-    #st{}.
+                                        [{paper,160},{ribbon,80}])),
+    merl:compile_and_load(Forms, [verbose]).
 
 var(Atom) ->
     merl:var(list_to_atom("__" ++ atom_to_list(Atom))).
