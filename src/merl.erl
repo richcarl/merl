@@ -221,8 +221,7 @@ split_forms([], _, [T|_]) ->
 parse_forms([Ts | Tss]) ->
     case erl_parse:parse_form(Ts) of
         {ok, Form} -> [Form | parse_forms(Tss)];
-        {error, {_L,M,Reason}} ->
-            fail(M:format_error(Reason))
+        {error, R} -> parse_error(R)
     end;
 parse_forms([]) ->
     [].
@@ -261,19 +260,18 @@ parse_5(Ts, Es) ->
         {ok, [{'case',_,_,Cs}]} -> Cs;
         {error, E} ->
             %% select the best error to report
-            case lists:last(lists:sort([E|Es])) of
-                {L, M, R} when is_atom(M), is_integer(L), L > 0 ->
-                    fail("~w: ~s", [L, M:format_error(R)]);
-                {{L,C}, M, R} when is_atom(M), is_integer(L), is_integer(C),
-                                   L > 0, C > 0 ->
-                    fail("~w:~w: ~s", [L,C,M:format_error(R)]);
-                {_, M, R} when is_atom(M) ->
-                    fail(M:format_error(R));
-                R ->
-                    fail("unknown parse error: ~p", [R])
-            end
+            parse_error(lists:last(lists:sort([E|Es])))
     end.
 
+parse_error({L, M, R}) when is_atom(M), is_integer(L), L > 0 ->
+    fail("~w: ~s", [L, M:format_error(R)]);
+parse_error({{L,C}, M, R}) when is_atom(M), is_integer(L), is_integer(C),
+                                L > 0, C > 0 ->
+    fail("~w:~w: ~s", [L,C,M:format_error(R)]);
+parse_error({_, M, R}) when is_atom(M) ->
+    fail(M:format_error(R));
+parse_error(R) ->
+    fail("unknown parse error: ~p", [R]).
 
 %% ------------------------------------------------------------------------
 %% Templates, substitution and matching
