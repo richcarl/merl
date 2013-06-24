@@ -245,9 +245,8 @@ match_test_() ->
 
 switch_test_() ->
     [?_assertEqual(42, merl:switch(?Q("foo"), [fun () -> 42 end])),
-     ?_assertError(merl_switch_badarg,
-                   merl:switch(?Q("foo"), [fun () -> 17 end,
-                                           fun () -> 42 end])),
+     ?_assertEqual(17, merl:switch(?Q("foo"), [fun () -> 17 end,
+                                               fun () -> 42 end])),
      ?_assertEqual(17, merl:switch(?Q("foo"), [{?Q("foo"),
                                                 fun ([]) -> 17 end},
                                                fun () -> 42 end])),

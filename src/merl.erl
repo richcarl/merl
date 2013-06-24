@@ -521,6 +521,8 @@ match(Patterns, Trees) when is_list(Patterns), is_list(Trees) ->
     catch
         error -> error
     end;
+match(Patterns, Tree) when is_list(Patterns) -> match(Patterns, [Tree]);
+match(Pattern, Trees) when is_list(Trees) -> match([Pattern], Trees);
 match(Pattern, Tree) ->
     try {ok, match_template(template(Pattern), Tree, [])}
     catch
@@ -530,7 +532,9 @@ match(Pattern, Tree) ->
 match_1([P|Ps], [T | Ts], Dict) ->
     match_1(Ps, Ts, match_template(template(P), T, Dict));
 match_1([], [], Dict) ->
-    Dict.
+    Dict;
+match_1(_, _, Dict) ->
+    erlang:error(merl_match_arity).
 
 %% match a template against a syntax tree
 match_template({template, Type, _, Gs}, Tree, Dict) ->
@@ -662,14 +666,12 @@ compare_leaves(Type, T1, T2) ->
 
 -type body() :: fun( (env()) -> any() ).
 
--type guarded_body() :: {guard(), body()}.
+-type guarded_body() :: body() | {guard(), body()}.
 
 -type default() :: fun( () -> any() ).
 
--type clause() :: {pattern() | [pattern()], body()}
-                | {pattern() | [pattern()], guarded_body()}
-                | {pattern() | [pattern()], [guarded_body() | body()]}
-                | {pattern() | [pattern()], guard(), body()}
+-type clause() :: {pattern()|[pattern()], guard(), body()}
+                | {pattern()|[pattern()], guarded_body()|[guarded_body()]}
                 | default().
 
 -spec switch(tree() | [tree()], [clause()]) -> any().
@@ -678,8 +680,8 @@ switch(Tree, [{Pattern, Body} | Cs]) ->
     switch_1(Tree, Pattern, Body, Cs);
 switch(Tree, [{Pattern, Guard, Body} | Cs]) ->
     switch_1(Tree, Pattern, {Guard, Body}, Cs);
-switch(_Tree, [Body]) when is_function(Body, 0) ->
-    Body();
+switch(_Tree, [Default | _Cs]) when is_function(Default, 0) ->
+    Default();
 switch(_Tree, []) ->
     erlang:error(merl_switch_clause);
 switch(_Tree, _) ->
@@ -687,34 +689,25 @@ switch(_Tree, _) ->
 
 switch_1(Tree, Pattern, Body, Cs) ->
     case match(Pattern, Tree) of
+        {ok, Env} when is_list(Body) ->
+            switch_2(Env, Body, Tree, Cs);
         {ok, Env} ->
-            case Body of
-                List when is_list(List) ->
-                    switch_2(Env, List);
-                {Guard, Body1}
-                  when is_function(Guard, 1), is_function(Body1, 1) ->
-                    case Guard(Env) of
-                        true -> Body1(Env);
-                        false -> switch(Tree, Cs)
-                    end;
-                _ when is_function(Body, 1) ->
-                    Body(Env);
-                _ ->
-                    erlang:error(merl_switch_badarg)
-            end;
+            switch_2(Env, [Body], Tree, Cs);
         error ->
             switch(Tree, Cs)
     end.
 
-switch_2(Env, [{Guard, Body} | Cs])
+switch_2(Env, [{Guard, Body} | Bs], Tree, Cs)
   when is_function(Guard, 1), is_function(Body, 1) ->
     case Guard(Env) of
         true -> Body(Env);
-        false -> switch_2(Env, Cs)
+        false -> switch_2(Env, Bs, Tree, Cs)
     end;
-switch_2(Env, [Body]) when is_function(Body, 1) ->
+switch_2(Env, [Body | _Bs], _Tree, _Cs) when is_function(Body, 1) ->
     Body(Env);
-switch_2(_Env, _) ->
+switch_2(_Env, [], Tree, Cs) ->
+    switch(Tree, Cs);
+switch_2(_Env, _, _Tree, _Cs) ->
     erlang:error(merl_switch_badarg).
 
 
