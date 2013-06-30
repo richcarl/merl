@@ -1,5 +1,5 @@
 %% ---------------------------------------------------------------------
-%% @author Richard Carlsson <richardc@klarna.com>
+%% @author Richard Carlsson <carlsson.richard@gmail.com>
 %% @copyright 2012 Richard Carlsson
 %% @doc Parse transform for merl. Evaluates calls to functions in `merl',
 %% turning strings to templates, etc., at compile-time.

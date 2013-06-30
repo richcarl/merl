@@ -1,5 +1,5 @@
 %% ---------------------------------------------------------------------
-%% @author Richard Carlsson <richardc@klarna.com>
+%% @author Richard Carlsson <carlsson.richard@gmail.com>
 %% @copyright 2012 Richard Carlsson
 %% @doc Making it simple to build a module with merl
 
