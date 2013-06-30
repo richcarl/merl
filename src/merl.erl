@@ -2,6 +2,35 @@
 %% @author Richard Carlsson <carlsson.richard@gmail.com>
 %% @copyright 2010-2012 Richard Carlsson
 %% @doc Metaprogramming in Erlang.
+%%
+%% Merl makes it easy both to build new ASTs (abstract syntax trees) from
+%% scratch and to match and decompose existing ASTs.
+%%
+%% == Quick start ==
+%%
+%% To enable the full power of Merl, your module needs to include the Merl
+%% header file:
+%% ```-include_lib("merl/include/merl.hrl").'''
+%%
+%% Then, you can use the `?Q(Text)' and `?Q(Text, Map)' macros in your code
+%% to create ASTs or match on existing ASTs. For example:
+%%
+%% ```TupleAST = ?Q("{foo, 42}"),
+%%    ?Q("{foo, _@NumberAST}") = TupleAST,
+%%    ListAST = ?Q("_@NumberAST = element(2, _@TupleAST)")'''
+%%
+%% Calling `io:put_chars(erl_prettypr:format(ListAST))' will then print the
+%% following code:
+%%
+%% ```42 = element(2, {foo, 42})'''
+%%
+%% The `?Q' macros turn the quoted code fragments into ASTs, and lifts
+%% metavariables such as `_@TupleAST' and `_@NumberAST' to the level of your
+%% Erlang code, so you can use the corresponding Erlang variables `TupleAST'
+%% and `NumberAST' directly. This is the most straightforward way to use
+%% Merl, and in many cases it's all you need.
+
+%% (Note that the ?Q macros cannot be used in the Erlang shell.)
 
 -module(merl).
 
