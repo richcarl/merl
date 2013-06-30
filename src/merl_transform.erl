@@ -31,11 +31,11 @@ pre(T) ->
     merl:switch(
       T,
       [{?Q("merl:quote(_@line, _@text) = _@expr"),
-        fun ([{expr, _}, {line, _}, {text,Text}]) ->
-                erl_syntax:is_literal(Text)
+        fun ([{expr, _}, {line, Line}, {text,Text}]) ->
+                erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line)
         end,
-        fun ([{expr, _}, {line, _}, {text, Text}]=Env) ->
-                expand_match(Text, Env, T)
+        fun ([{expr, Expr}, {line, _}, {text, Text}]) ->
+                expand_match(Expr, Text)
         end},
        fun () -> T end
       ]).
@@ -81,7 +81,9 @@ expand_quote([Text, Env], T, StartPos) ->
                     {env, Env}]));
         false ->
             T
-    end.
+    end;
+expand_quote(_As, T, _StartPos) ->
+    T.
 
 expand_template(F, [Pattern | Args], T) ->
     %% TODO: use switch guard instead of is_literal test here
@@ -94,7 +96,9 @@ expand_template(F, [Pattern | Args], T) ->
                 {args, Args}]);
         false ->
             T
-    end.
+    end;
+expand_template(_F, _As, T) ->
+    T.
 
 eval_call(F, As, T) ->
     try apply(merl, F, As) of
@@ -118,10 +122,20 @@ eval_call(F, As, T) ->
         throw:_Reason -> T
     end.
 
-expand_match(Text, Env, _T) ->
-    _Text1 = erl_syntax:concrete(Text),
-    %% TODO: must get variables from Text and match on output env
-    map(?Q("{ok, 42} = merl:match(merl:quote(_@line, _@text), _@expr)", Env)).
+expand_match(Expr, Text) ->
+    %% we must rewrite the metavariables in the pattern to use lowercase,
+    %% and then use real matching to bind the Erlang-level variables
+    T0 = merl:template(merl:quote(erl_syntax:concrete(Text))),
+    Vars = [V || V <- merl:template_vars(T0), is_inline_metavar(V)],
+    T1 = merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
+    Out = erl_syntax:list([erl_syntax:tuple([erl_syntax:atom(var_to_tag(V)),
+                                             erl_syntax:variable(V)])
+                           || V <- Vars]),
+    map(?Q("{ok, _@out} = merl:match(_@template, _@expr)",
+           [{expr, Expr}, {out, Out}, {template, erl_syntax:abstract(T1)}])).
+
+var_to_tag(V) ->
+    list_to_atom(string:to_lower(atom_to_list(V))).
 
 is_inline_metavar(Var) when is_atom(Var) ->
     is_erlang_var(atom_to_list(Var));

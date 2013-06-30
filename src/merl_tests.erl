@@ -316,4 +316,19 @@ inline_meta_autoabstract_test_() ->
                      end))
     ].
 
+meta_match_test_() ->
+    [?_assertEqual("{[bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         ?Q("{foo, _@Bar, '@Baz'}") = Tree,
+                         ?Q("{_@Bar, _@Baz}")
+                     end)),
+     ?_assertError({badmatch,error},
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         ?Q("{fie, _@Bar, '@Baz'}") = Tree,
+                         ?Q("{_@Bar, _@Baz}")
+                     end))
+    ].
+
 -endif.
