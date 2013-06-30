@@ -176,9 +176,9 @@ quote(Text) ->
 %% @see quote/1
 
 quote({Line, Col}, Text)
-  when is_integer(Line), is_integer(Col), Line > 0, Col > 0 ->
+  when is_integer(Line), is_integer(Col) ->
     quote_1(Line, Col, Text);
-quote(StartPos, Text) when is_integer(StartPos), StartPos > 0 ->
+quote(StartPos, Text) when is_integer(StartPos) ->
     quote_1(StartPos, undefined, Text).
 
 quote_1(StartLine, StartCol, Text) ->
@@ -264,10 +264,9 @@ parse_5(Ts, Es) ->
             parse_error(lists:last(lists:sort([E|Es])))
     end.
 
-parse_error({L, M, R}) when is_atom(M), is_integer(L), L > 0 ->
+parse_error({L, M, R}) when is_atom(M), is_integer(L) ->
     fail("~w: ~s", [L, M:format_error(R)]);
-parse_error({{L,C}, M, R}) when is_atom(M), is_integer(L), is_integer(C),
-                                L > 0, C > 0 ->
+parse_error({{L,C}, M, R}) when is_atom(M), is_integer(L), is_integer(C) ->
     fail("~w:~w: ~s", [L,C,M:format_error(R)]);
 parse_error({_, M, R}) when is_atom(M) ->
     fail(M:format_error(R));
@@ -533,7 +532,7 @@ match_1([P|Ps], [T | Ts], Dict) ->
     match_1(Ps, Ts, match_template(template(P), T, Dict));
 match_1([], [], Dict) ->
     Dict;
-match_1(_, _, Dict) ->
+match_1(_, _, _Dict) ->
     erlang:error(merl_match_arity).
 
 %% match a template against a syntax tree
