@@ -32,15 +32,32 @@ pre(T) ->
     merl:switch(
       T,
       [{?Q("merl:quote(_@line, _@text) = _@expr"),
-        fun ([{expr, _}, {line, Line}, {text,Text}]) ->
+        fun ([{expr,_}, {line,Line}, {text,Text}]) ->
                 erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line)
         end,
-        fun ([{expr, Expr}, {line, Line}, {text, Text}]) ->
+        fun ([{expr,Expr}, {line,Line}, {text,Text}]) ->
                 pre_expand_match(Expr, erl_syntax:concrete(Line),
                                  erl_syntax:concrete(Text))
         end},
+       {?Q(["case _@expr of",
+            "  merl:quote(_@line, _@text) -> _@@_; _@_@_ -> 0",
+            "end"]),
+        fun case_guard/1,
+        fun (As) -> case_body(As, T) end},
+       {?Q(["case _@expr of",
+            "  merl:quote(_@line, _@text) when _@@_ -> _@@_; _@_@_ -> 0",
+            "end"]),
+        fun case_guard/1,
+        fun (As) -> case_body(As, T) end},
        fun () -> T end
       ]).
+
+case_guard([{expr,_}, {line,Line}, {text,Text}]) ->
+    erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line).
+
+case_body([{expr,Expr}, {line,Line}, {text,Text}], T) ->
+    pre_expand_case(Expr, erl_syntax:case_expr_clauses(T),
+                    erl_syntax:concrete(Line), erl_syntax:concrete(Text)).
 
 post(T) ->
     merl:switch(
@@ -124,21 +141,74 @@ eval_call(Line, F, As, T) ->
     end.
 
 pre_expand_match(Expr, Line, Text) ->
+    {Template, Out} = rewrite_pattern(Line, Text),
+    merl:qquote(Line, "{ok, _@out} = merl:match(_@template, _@expr)",
+                [{expr, Expr},
+                 {out, Out},
+                 {template, erl_syntax:abstract(Template)}]).
+
+rewrite_pattern(Line, Text) ->
     %% we must rewrite the metavariables in the pattern to use lowercase,
     %% and then use real matching to bind the Erlang-level variables
     T0 = merl:template(merl:quote(Line, Text)),
     Vars = [V || V <- merl:template_vars(T0), is_inline_metavar(V)],
-    T1 = merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
-    Out = erl_syntax:list([erl_syntax:tuple([erl_syntax:atom(var_to_tag(V)),
-                                             erl_syntax:variable(V)])
-                           || V <- Vars]),
-    merl:qquote(Line, "{ok, _@out} = merl:match(_@template, _@expr)",
-                [{expr, Expr},
-                 {out, Out},
-                 {template, erl_syntax:abstract(T1)}]).
+    {merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
+     erl_syntax:list([erl_syntax:tuple([erl_syntax:atom(var_to_tag(V)),
+                                        erl_syntax:variable(V)])
+                      || V <- Vars])}.
 
 var_to_tag(V) ->
     list_to_atom(string:to_lower(atom_to_list(V))).
+
+pre_expand_case(Expr, Clauses, Line, Text) ->
+    merl:qquote(Line, "merl:switch(_@expr, _@clauses)",
+                [{clauses, erl_syntax:list([pre_expand_case_clause(C)
+                                            || C <- Clauses])},
+                 {expr, Expr}]).
+
+pre_expand_case_clause(T) ->
+    %% note that the only allowed non ``?Q(...) -> ...'' clause is ``_ -> ...''
+    merl:switch(
+      T,
+      [{?Q("(merl:quote(_@line, _@text)) -> _@@body"),
+        fun ([{body,_}, {line,Line}, {text,Text}]) ->
+                erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line)
+        end,
+        fun ([{body,Body}, {line,Line}, {text,Text}]) ->
+                pre_expand_case_clause(Body, erl_syntax:concrete(Line),
+                                       erl_syntax:concrete(Text))
+        end},
+       {?Q("(merl:quote(_@line, _@text)) when _@@guard -> _@@body"),
+        fun ([{body,_}, {guard,_}, {line,Line}, {text,Text}]) ->
+                erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line)
+        end,
+        fun ([{body,Body}, {guard,Guard}, {line,Line}, {text,Text}]) ->
+                pre_expand_case_clause(Body, Guard, erl_syntax:concrete(Line),
+                                       erl_syntax:concrete(Text))
+        end},
+       {?Q("_ -> _@@body"),
+        fun (Env) -> merl:qquote("fun () -> _@body end", Env) end}
+      ]).
+
+pre_expand_case_clause(Body, Line, Text) ->
+    %% this is similar to a meta-match ``?Q("...") = Term''
+    {Template, Out} = rewrite_pattern(Line, Text),
+    merl:qquote(Line, ["{_@template, ",
+                       " fun (_@out) -> _@body end}"],
+                [{body, Body},
+                 {out, Out},
+                 {template, erl_syntax:abstract(Template)}]).
+
+pre_expand_case_clause(Body, Guard, Line, Text) ->
+    %% note that the guards can be arbitrary expressions
+    {Template, Out} = rewrite_pattern(Line, Text),
+    merl:qquote(Line, ["{_@template, ",
+                       " fun (_@out) -> _@guard end, ",
+                       " fun (_@out) -> _@body end}"],
+                [{body, Body},
+                 {guard,Guard},
+                 {out, Out},
+                 {template, erl_syntax:abstract(Template)}]).
 
 is_inline_metavar(Var) when is_atom(Var) ->
     is_erlang_var(atom_to_list(Var));

@@ -331,4 +331,39 @@ meta_match_test_() ->
                      end))
     ].
 
+meta_case_test_() ->
+    %% TODO: add a couple of tests for guarded clauses as well
+    [?_assertEqual("{[bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{foo, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}")
+                         end
+                     end)),
+     ?_assertEqual("{[bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{fie, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}");
+                             ?Q("{foo, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertEqual("{foo, [bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{fie, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertError(merl_switch_clause,
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("bar") -> ?Q("baz")
+                         end
+                     end))
+    ].
+
 -endif.
