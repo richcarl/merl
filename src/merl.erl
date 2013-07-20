@@ -34,7 +34,7 @@
 
 -module(merl).
 
--export([term/1, var/1, set_pos/2]).
+-export([term/1, var/1, set_pos/2, show/1]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
@@ -93,7 +93,6 @@ add_attribute(Name, Term, Module) ->
 
 set_file(Filename, Module) ->
     merl_build:set_file(Filename, Module).
-
 
 %% ------------------------------------------------------------------------
 %% Compiling and loading code directly to memory
@@ -159,6 +158,15 @@ term(Term) ->
 
 set_pos(Tree, Pos) ->
     erl_syntax_lib:map(fun (T) -> set_pos(T,Pos) end, Tree).
+
+
+%% @doc Pretty-print a syntax tree or template to the standard output.
+
+show(Ts) when is_list(Ts) ->
+    lists:foreach(fun show/1, Ts);
+show(T) ->
+    io:put_chars(erl_prettypr:format(tree(T))),
+    io:nl().
 
 
 %% ------------------------------------------------------------------------

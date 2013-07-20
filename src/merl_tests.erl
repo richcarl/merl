@@ -381,10 +381,10 @@ meta_case_test_() ->
                          Tree = ?Q("{foo, [bar], baz()}"),
                          case Tree of
                              ?Q("{foo, [_@Bar], '@Baz'}")
-                               when erl_syntax:is_atom(Bar, foo)->
+                               when erl_syntax:is_atom(Bar, foo) ->
                                  ?Q("{1, _@Bar, _@Baz}");
                              ?Q("{foo, [_@Bar], '@Baz'}")
-                               when erl_syntax:is_atom(Bar, bar)->
+                               when erl_syntax:is_atom(Bar, bar) ->
                                  ?Q("{2, _@Bar, _@Baz}");
                              ?Q("{foo, [_@Bar], '@Baz'}") ->
                                  ?Q("{3, _@Bar, _@Baz}");

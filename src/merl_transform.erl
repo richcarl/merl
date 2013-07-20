@@ -40,24 +40,24 @@ pre(T) ->
                                  erl_syntax:concrete(Text))
         end},
        {?Q(["case _@expr of",
-            "  merl:quote(_@line, _@text) -> _@@_; _@_@_ -> 0",
+            "  merl:quote(_@_, _@text) -> _@@_; _@_@_ -> 0",
             "end"]),
         fun case_guard/1,
         fun (As) -> case_body(As, T) end},
        {?Q(["case _@expr of",
-            "  merl:quote(_@line, _@text) when _@@_ -> _@@_; _@_@_ -> 0",
+            "  merl:quote(_@_, _@text) when _@@_ -> _@@_; _@_@_ -> 0",
             "end"]),
         fun case_guard/1,
         fun (As) -> case_body(As, T) end},
        fun () -> T end
       ]).
 
-case_guard([{expr,_}, {line,Line}, {text,Text}]) ->
-    erl_syntax:is_literal(Text) andalso erl_syntax:is_literal(Line).
+case_guard([{expr,_}, {text,Text}]) ->
+    erl_syntax:is_literal(Text).
 
-case_body([{expr,Expr}, {line,Line}, {text,Text}], T) ->
+case_body([{expr,Expr}, {text,_Text}], T) ->
     pre_expand_case(Expr, erl_syntax:case_expr_clauses(T),
-                    erl_syntax:concrete(Line), erl_syntax:concrete(Text)).
+                    erl_syntax:get_pos(T)).
 
 post(T) ->
     merl:switch(
@@ -160,7 +160,7 @@ rewrite_pattern(Line, Text) ->
 var_to_tag(V) ->
     list_to_atom(string:to_lower(atom_to_list(V))).
 
-pre_expand_case(Expr, Clauses, Line, Text) ->
+pre_expand_case(Expr, Clauses, Line) ->
     merl:qquote(Line, "merl:switch(_@expr, _@clauses)",
                 [{clauses, erl_syntax:list([pre_expand_case_clause(C)
                                             || C <- Clauses])},
@@ -199,6 +199,8 @@ pre_expand_case_clause(Body, Line, Text) ->
                  {out, Out},
                  {template, erl_syntax:abstract(Template)}]).
 
+%% TODO: rewrite guard disjunction-of-conjunctions as orelse-of-andalso
+%% TODO: insert dummy variable uses _=V at the start of all "guards"
 pre_expand_case_clause(Body, Guard, Line, Text) ->
     %% note that the guards can be arbitrary expressions
     {Template, Out} = rewrite_pattern(Line, Text),
