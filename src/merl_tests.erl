@@ -376,18 +376,18 @@ meta_case_test_() ->
                              _ -> Tree
                          end
                      end)),
-     ?_assertEqual("{2, bar, baz()}",
+     ?_assertEqual("{2, baz()}",
                    f(begin
                          Tree = ?Q("{foo, [bar], baz()}"),
                          case Tree of
                              ?Q("{foo, [_@Bar], '@Baz'}")
                                when erl_syntax:is_atom(Bar, foo) ->
-                                 ?Q("{1, _@Bar, _@Baz}");
+                                 ?Q("{1, _@Baz}");
                              ?Q("{foo, [_@Bar], '@Baz'}")
                                when erl_syntax:is_atom(Bar, bar) ->
-                                 ?Q("{2, _@Bar, _@Baz}");
+                                 ?Q("{2, _@Baz}");
                              ?Q("{foo, [_@Bar], '@Baz'}") ->
-                                 ?Q("{3, _@Bar, _@Baz}");
+                                 ?Q("{3, _@Baz}");
                              _ -> Tree
                          end
                      end))

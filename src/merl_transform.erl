@@ -141,7 +141,7 @@ eval_call(Line, F, As, T) ->
     end.
 
 pre_expand_match(Expr, Line, Text) ->
-    {Template, Out} = rewrite_pattern(Line, Text),
+    {Template, Out, _Vars} = rewrite_pattern(Line, Text),
     merl:qquote(Line, "{ok, _@out} = merl:match(_@template, _@expr)",
                 [{expr, Expr},
                  {out, Out},
@@ -155,7 +155,8 @@ rewrite_pattern(Line, Text) ->
     {merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
      erl_syntax:list([erl_syntax:tuple([erl_syntax:atom(var_to_tag(V)),
                                         erl_syntax:variable(V)])
-                      || V <- Vars])}.
+                      || V <- Vars]),
+     Vars}.
 
 var_to_tag(V) ->
     list_to_atom(string:to_lower(atom_to_list(V))).
@@ -192,25 +193,33 @@ pre_expand_case_clause(T) ->
 
 pre_expand_case_clause(Body, Line, Text) ->
     %% this is similar to a meta-match ``?Q("...") = Term''
-    {Template, Out} = rewrite_pattern(Line, Text),
+    {Template, Out, Vars} = rewrite_pattern(Line, Text),
     merl:qquote(Line, ["{_@template, ",
-                       " fun (_@out) -> _@body end}"],
+                       " fun (_@out) -> _@unused, _@body end}"],
                 [{body, Body},
                  {out, Out},
-                 {template, erl_syntax:abstract(Template)}]).
+                 {template, erl_syntax:abstract(Template)},
+                 {unused, dummy_uses(Vars)}]).
 
 %% TODO: rewrite guard disjunction-of-conjunctions as orelse-of-andalso
-%% TODO: insert dummy variable uses _=V at the start of all "guards"
 pre_expand_case_clause(Body, Guard, Line, Text) ->
     %% note that the guards can be arbitrary expressions
-    {Template, Out} = rewrite_pattern(Line, Text),
+    {Template, Out, Vars} = rewrite_pattern(Line, Text),
     merl:qquote(Line, ["{_@template, ",
-                       " fun (_@out) -> _@guard end, ",
-                       " fun (_@out) -> _@body end}"],
+                       " fun (_@out) -> _@unused, _@guard end, ",
+                       " fun (_@out) -> _@unused, _@body end}"],
                 [{body, Body},
                  {guard,Guard},
                  {out, Out},
-                 {template, erl_syntax:abstract(Template)}]).
+                 {template, erl_syntax:abstract(Template)},
+                 {unused, dummy_uses(Vars)}]).
+
+%% We have to insert dummy variable uses at the beginning of the "guard" and
+%% "body" function bodies to avoid warnings for unused variables in the
+%% generated code. (Expansions at the Erlang level can't be marked up as
+%% compiler generated so that later compiler stages can ignore them.)
+dummy_uses(Vars) ->
+    [?Q("_ = _@var", [{var, erl_syntax:variable(V)}]) || V <- Vars].
 
 is_inline_metavar(Var) when is_atom(Var) ->
     is_erlang_var(atom_to_list(Var));
