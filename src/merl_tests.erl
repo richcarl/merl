@@ -332,21 +332,11 @@ meta_match_test_() ->
     ].
 
 meta_case_test_() ->
-    %% TODO: add a couple of tests for guarded clauses as well
     [?_assertEqual("{[bar], baz()}",
                    f(begin
                          Tree = ?Q("{foo, [bar], baz()}"),
                          case Tree of
                              ?Q("{foo, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}")
-                         end
-                     end)),
-     ?_assertEqual("{[bar], baz()}",
-                   f(begin
-                         Tree = ?Q("{foo, [bar], baz()}"),
-                         case Tree of
-                             ?Q("{fie, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}");
-                             ?Q("{foo, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}");
-                             _ -> Tree
                          end
                      end)),
      ?_assertEqual("{foo, [bar], baz()}",
@@ -361,7 +351,44 @@ meta_case_test_() ->
                    f(begin
                          Tree = ?Q("{foo, [bar], baz()}"),
                          case Tree of
-                             ?Q("bar") -> ?Q("baz")
+                             ?Q("{fie, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}")
+                         end
+                     end)),
+     ?_assertEqual("{1, [bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{foo, _@Bar, '@Baz'}") ->
+                                 ?Q("{1, _@Bar, _@Baz}");
+                             ?Q("{fie, _@Bar, '@Baz'}") ->
+                                 ?Q("{2, _@Bar, _@Baz}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertEqual("{2, [bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{fie, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{foo, _@Bar, '@Baz'}") ->
+                                 ?Q("{1, _@Bar, _@Baz}");
+                             ?Q("{fie, _@Bar, '@Baz'}") ->
+                                 ?Q("{2, _@Bar, _@Baz}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertEqual("{2, bar, baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         case Tree of
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, foo)->
+                                 ?Q("{1, _@Bar, _@Baz}");
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, bar)->
+                                 ?Q("{2, _@Bar, _@Baz}");
+                             ?Q("{foo, [_@Bar], '@Baz'}") ->
+                                 ?Q("{3, _@Bar, _@Baz}");
+                             _ -> Tree
                          end
                      end))
     ].
