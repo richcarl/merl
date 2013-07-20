@@ -47,7 +47,7 @@
 
 -export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
-%% NOTE: this module should not include merl.hrl!
+%% NOTE: this module may not include merl.hrl!
 
 %% TODO: simple text visualization of syntax trees, for debugging etc.?
 %% TODO: utility function to get free/bound variables in expr?
