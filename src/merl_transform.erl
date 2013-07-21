@@ -167,6 +167,8 @@ pre_expand_case(Expr, Clauses, Line) ->
                                             || C <- Clauses])},
                  {expr, Expr}]).
 
+%% TODO: FIXME: proper pattern for matching guard as disjunction-of-conjunctions
+
 pre_expand_case_clause(T) ->
     %% note that the only allowed non ``?Q(...) -> ...'' clause is ``_ -> ...''
     merl:switch(
@@ -201,7 +203,7 @@ pre_expand_case_clause(Body, Line, Text) ->
                  {template, erl_syntax:abstract(Template)},
                  {unused, dummy_uses(Vars)}]).
 
-%% TODO: rewrite guard disjunction-of-conjunctions as orelse-of-andalso
+%% TODO: FIXME: rewrite guard disjunction-of-conjunctions as orelse-of-andalso
 pre_expand_case_clause(Body, Guard, Line, Text) ->
     %% note that the guards can be arbitrary expressions
     {Template, Out, Vars} = rewrite_pattern(Line, Text),

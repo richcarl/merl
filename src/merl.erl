@@ -32,6 +32,13 @@
 
 %% (Note that the ?Q macros cannot be used in the Erlang shell.)
 
+%% TODO: document how variables match in guards, i.e., there's always an
+%% implicit disjunction-of-conjunctions, and the pattern "when _@@g ->" will
+%% only match a single conjunction, "when _@_@g ->" will match a number of
+%% conjunctions (without the disjunction wrapper), and "when _@__g ->" will
+%% match a single explicit disjunction of conjunctions (there is never more
+%% than one)
+
 -module(merl).
 
 -export([term/1, var/1, set_pos/2, show/1]).
@@ -106,7 +113,7 @@ compile(Code) ->
 %% @see compile_and_load/2
 %% @see compile/1
 compile(Code, Options) when not is_list(Code)->
-    case erl_syntax:type(Code) of
+    case type(Code) of
         form_list -> compile(erl_syntax:form_list_elements(Code));
         _ -> compile([Code], Options)
     end;
@@ -356,8 +363,10 @@ template_0(Tree) ->
         Template -> Template
     end.
 
+%% returns either a template or a lifted metavariable {String}, or 'false'
+%% if Tree contained no metavariables
 template_1(Tree) ->
-    case erl_syntax:subtrees(Tree) of
+    case subtrees(Tree) of
         [] ->
             case check_meta(Tree) of
                 {"_"++Cs}=V when Cs =/= [] -> V;
@@ -370,8 +379,7 @@ template_1(Tree) ->
         Gs ->
             case template_2(Gs, [], false) of
                 Gs1 when is_list(Gs1) ->
-                    {template, erl_syntax:type(Tree),
-                     erl_syntax:get_attrs(Tree), Gs1};
+                    {template, type(Tree), erl_syntax:get_attrs(Tree), Gs1};
                 Other ->
                     Other
             end
@@ -481,7 +489,7 @@ tree(Template) ->
 tree_1({template, Type, Attrs, Groups}) ->
     %% flattening here is needed for templates created via source transforms
     Gs = [lists:flatten([tree_1(T) || T <- G]) || G <- Groups],
-    erl_syntax:set_attrs(erl_syntax:make_tree(Type, Gs), Attrs);
+    erl_syntax:set_attrs(make_tree(Type, Gs), Attrs);
 tree_1({Var}) when is_atom(Var) ->
     erl_syntax:atom(list_to_atom("@"++atom_to_list(Var)));
 tree_1({Var}) when is_integer(Var) ->
@@ -574,8 +582,8 @@ match_1(_, _, _Dict) ->
 
 %% match a template against a syntax tree
 match_template({template, Type, _, Gs}, Tree, Dict) ->
-    case erl_syntax:type(Tree) of
-        Type -> match_template_1(Gs, erl_syntax:subtrees(Tree), Dict);
+    case type(Tree) of
+        Type -> match_template_1(Gs, subtrees(Tree), Dict);
         _ -> throw(error)  % type mismatch
     end;
 match_template({Var}, _Tree, Dict)
@@ -612,11 +620,6 @@ match_template_2(_, _, _Dict) ->
     throw(error).  % shape mismatch
 
 %% match the tails in reverse order; no further globs allowed
-match_glob([{Var} | Ts1], [_ | Ts2], Var, Dict)
-  when Var =:= '_' ; Var =:= 0 ->
-    match_glob(Ts1, Ts2, Var, Dict);  % anonymous variable
-match_glob([{Var} | Ts1], [Tree | Ts2], Var, Dict) ->
-    match_glob(Ts1, Ts2, Var, orddict:store(Var, Tree, Dict));
 match_glob([{'*',Var} | _], _, _, _) ->
     fail("multiple glob variables in same match group: ~w", [Var]);
 match_glob([T1 | Ts1], [T2 | Ts2], Var, Dict) ->
@@ -631,17 +634,17 @@ match_glob(_, _, _, _Dict) ->
 
 %% compare two syntax trees for equivalence
 compare_trees(T1, T2) ->
-    Type1 = erl_syntax:type(T1),
-    case erl_syntax:type(T2) of
+    Type1 = type(T1),
+    case type(T2) of
         Type1 ->
-            case erl_syntax:subtrees(T1) of
+            case subtrees(T1) of
                 [] ->
-                    case erl_syntax:subtrees(T2) of
+                    case subtrees(T2) of
                         [] -> compare_leaves(Type1, T1, T2);
                         _Gs2 -> false  % shape mismatch
                     end;
                 Gs1 ->
-                    case erl_syntax:subtrees(T2) of
+                    case subtrees(T2) of
                         [] -> false;  % shape mismatch
                         Gs2 -> compare_trees_1(Gs1, Gs2)
                     end
@@ -785,7 +788,7 @@ tag(Name) ->
 %% anonymous catch-all pattern in matches.
 
 check_meta(Tree) ->
-    case erl_syntax:type(Tree) of
+    case type(Tree) of
         atom ->
             case erl_syntax:atom_name(Tree) of
                 "@" ++ Cs when Cs =/= [] -> {Cs};
@@ -813,3 +816,91 @@ check_meta(Tree) ->
         _ ->
             false
     end.
+
+%% wrappers around erl_syntax functions to provide more uniform shape of
+%% generic subtrees (maybe this can be fixed in syntax_tools one day)
+
+type(T) ->
+    case erl_syntax:type(T) of
+        nil  -> list;
+        Type -> Type
+    end.
+
+subtrees(T) ->
+    case erl_syntax:type(T) of
+        tuple ->
+            [erl_syntax:tuple_elements(T)];  %% don't treat {} as a leaf
+        nil ->
+            [[], []];  %% don't treat [] as a leaf, but as a list
+        list ->
+            case erl_syntax:list_suffix(T) of
+                none ->
+                    [erl_syntax:list_prefix(T), []];
+                S ->
+                    [erl_syntax:list_prefix(T), [S]]
+            end;
+        binary_field ->
+            [[erl_syntax:binary_field_body(T)],
+             erl_syntax:binary_field_types(T)];
+        clause ->
+            case erl_syntax:clause_guard(T) of
+                none ->
+                    [erl_syntax:clause_patterns(T), [],
+                     erl_syntax:clause_body(T)];
+                G ->
+                    [erl_syntax:clause_patterns(T), [G],
+                     erl_syntax:clause_body(T)]
+            end;
+        receive_expr ->
+            case erl_syntax:receive_expr_timeout(T) of
+                none ->
+                    [erl_syntax:receive_expr_clauses(T), [], []];
+                E ->
+                    [erl_syntax:receive_expr_clauses(T), [E],
+                     erl_syntax:receive_expr_action(T)]
+            end;
+        record_access ->
+            case erl_syntax:record_access_type(T) of
+                none ->
+                    [[erl_syntax:record_access_argument(T)], [],
+                     [erl_syntax:record_access_field(T)]];
+                R ->
+                    [[erl_syntax:record_access_argument(T)], [R],
+                     [erl_syntax:record_access_field(T)]]
+            end;
+        record_expr ->
+            case erl_syntax:record_expr_argument(T) of
+                none ->
+                    [[], [erl_syntax:record_expr_type(T)],
+                     erl_syntax:record_expr_fields(T)];
+                V ->
+                    [[V], [erl_syntax:record_expr_type(T)],
+                     erl_syntax:record_expr_fields(T)]
+            end;
+        record_field ->
+            case erl_syntax:record_field_value(T) of
+                none ->
+                    [[erl_syntax:record_field_name(T)], []];
+                V ->
+                    [[erl_syntax:record_field_name(T)], [V]]
+            end;
+        _ ->
+            erl_syntax:subtrees(T)
+    end.
+
+make_tree(list, [P, []]) -> erl_syntax:list(P);
+make_tree(list, [P, [S]]) -> erl_syntax:list(P, S);
+make_tree(tuple, [E]) -> erl_syntax:tuple(E);
+make_tree(binary_field, [[B], Ts]) -> erl_syntax:binary_field(B, Ts);
+make_tree(clause, [P, [], B]) -> erl_syntax:clause(P, none, B);
+make_tree(clause, [P, [G], B]) -> erl_syntax:clause(P, G, B);
+make_tree(receive_expr, [C, [], _A]) -> erl_syntax:receive_expr(C);
+make_tree(receive_expr, [C, [E], A]) -> erl_syntax:receive_expr(C, E, A);
+make_tree(record_access, [[E], [], [F]]) -> erl_syntax:record_access(E, F);
+make_tree(record_access, [[E], [T], [F]]) -> erl_syntax:record_access(E, T, F);
+make_tree(record_expr, [[], [T], F]) -> erl_syntax:record_expr(T, F);
+make_tree(record_expr, [[E], [T], F]) -> erl_syntax:record_expr(E, T, F);
+make_tree(record_field, [[N], []]) -> erl_syntax:record_field(N);
+make_tree(record_field, [[N], [E]]) -> erl_syntax:record_field(N, E);
+make_tree(Type, Groups) ->
+    erl_syntax:make_tree(Type, Groups).
