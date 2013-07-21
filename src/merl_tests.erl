@@ -426,6 +426,44 @@ meta_case_test_() ->
                                  ?Q("{3, _@Baz}");
                              _ -> Tree
                          end
+                     end)),
+     ?_assertEqual("{2, 42}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], 42}"),
+                         case Tree of
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, bar),
+                                    erl_syntax:is_integer(Baz, 17) ->
+                                 ?Q("{1, _@Bar}");
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, bar),
+                                    erl_syntax:is_integer(Baz, 42) ->
+                                 ?Q("{2, _@Baz}");
+                             ?Q("{foo, [_@Bar], '@Baz'}") ->
+                                 ?Q("{3, _@Baz}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertEqual("{2, 42}",
+                   f(begin
+                         Tree = ?Q("{foo, [baz], 42}"),
+                         case Tree of
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, bar),
+                                    erl_syntax:is_integer(Baz, 17)
+                                    ; erl_syntax:is_atom(Bar, baz),
+                                    erl_syntax:is_integer(Baz, 17) ->
+                                 ?Q("{1, _@Bar}");
+                             ?Q("{foo, [_@Bar], '@Baz'}")
+                               when erl_syntax:is_atom(Bar, bar),
+                                    erl_syntax:is_integer(Baz, 42)
+                                    ; erl_syntax:is_atom(Bar, baz),
+                                    erl_syntax:is_integer(Baz, 42) ->
+                                 ?Q("{2, _@Baz}");
+                             ?Q("{foo, [_@Bar], '@Baz'}") ->
+                                 ?Q("{3, _@Baz}");
+                             _ -> Tree
+                         end
                      end))
     ].
 

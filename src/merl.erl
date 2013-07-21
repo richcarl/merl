@@ -37,7 +37,8 @@
 %% only match a single conjunction, "when _@_@g ->" will match a number of
 %% conjunctions (without the disjunction wrapper), and "when _@__g ->" will
 %% match a single explicit disjunction of conjunctions (there is never more
-%% than one)
+%% than one), while finally "when _@__@g ->" will match any clause yielding
+%% [] if there is no guard and [Disjunction] if there is a guard.
 
 -module(merl).
 
