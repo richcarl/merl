@@ -57,11 +57,7 @@
 
 %% NOTE: this module may not include merl.hrl!
 
-%% TODO: simple text visualization of syntax trees, for debugging etc.?
-%% TODO: utility function to get free/bound variables in expr?
 %% TODO: work in ideas from smerl to make an almost-drop-in replacement
-%% TODO: add a lifting function that creates a fun that interprets code?
-%% TODO: add a function that takes a string and calls erl_syntax:meta()
 
 -type tree() :: erl_syntax:syntaxTree().
 
