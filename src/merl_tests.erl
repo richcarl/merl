@@ -118,8 +118,6 @@ metavar_test_() ->
     [?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("'@foo'"))))),
      ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("_@foo"))))),
      ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("\"'@foo\""))))),
-     ?_assertEqual("9090", f(merl:tree(merl:template(?Q("_@0"))))),
-     ?_assertEqual("90917", f(merl:tree(merl:template(?Q("_@17"))))),
      ?_assertEqual("{'@foo'}", f(merl:tree(merl:template(?Q("{_@foo}"))))),
      ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("{_@_foo}"))))),
      ?_assertEqual("909123", f(merl:tree(merl:template(?Q("{9090123}"))))),
@@ -336,6 +334,11 @@ inline_meta_test_() ->
                    f(begin
                          Foo = ?Q("foo"),
                          ?Q("{_@Foo,_@bar}")
+                     end)),
+     ?_assertEqual("{foo, '@bar'}",
+                   f(begin
+                         Q1 = ?Q("foo"),
+                         ?Q("{90919,_@bar}")
                      end))
     ].
 
@@ -349,6 +352,11 @@ inline_meta_autoabstract_test_() ->
                    f(begin
                          Foo = foo,
                          ?Q("{_@Foo@,_@bar@}")
+                     end)),
+     ?_assertEqual("{foo, '@bar@'}",
+                   f(begin
+                         Q1 = foo,
+                         ?Q("{909199,_@bar@}")
                      end))
     ].
 
@@ -358,6 +366,12 @@ meta_match_test_() ->
                          Tree = ?Q("{foo, [bar], baz()}"),
                          ?Q("{foo, _@Bar, '@Baz'}") = Tree,
                          ?Q("{_@Bar, _@Baz}")
+                     end)),
+     ?_assertEqual("{[bar], baz()}",
+                   f(begin
+                         Tree = ?Q("{foo, [bar], baz()}"),
+                         ?Q("{foo, 90919, 90929}") = Tree,
+                         ?Q("{_@Q1, _@Q2}")
                      end)),
      ?_assertError({badmatch,error},
                    f(begin

@@ -3,6 +3,9 @@
 %% @copyright 2012 Richard Carlsson
 %% @doc Parse transform for merl. Evaluates calls to functions in `merl',
 %% turning strings to templates, etc., at compile-time.
+%%
+%% Using `-include_lib("merl/include/merl.hrl").' enables the transform,
+%% unless the macro `MERL_NO_TRANSFORM' is defined first.
 
 -module(merl_transform).
 
@@ -148,11 +151,22 @@ rewrite_pattern(Line, Text) ->
     T0 = merl:template(merl:quote(Line, Text)),
     Vars = [V || V <- merl:template_vars(T0), is_inline_metavar(V)],
     {merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
-     erl_syntax:list([erl_syntax:tuple([erl_syntax:atom(var_to_tag(V)),
-                                        erl_syntax:variable(V)])
+     erl_syntax:list([erl_syntax:tuple([erl_syntax:abstract(var_to_tag(V)),
+                                        erl_syntax:variable(var_name(V))])
                       || V <- Vars]),
      Vars}.
 
+var_name(V) when is_integer(V) ->
+    V1 = if V > 99, (V rem 100) =:= 99 ->
+                 V div 100;
+            V > 9, (V rem 10) =:= 9 ->
+                 V div 10;
+            true -> V
+         end,
+    list_to_atom("Q" ++ integer_to_list(V1));
+var_name(V) -> V.
+
+var_to_tag(V) when is_integer(V) -> V;
 var_to_tag(V) ->
     list_to_atom(string:to_lower(atom_to_list(V))).
 
@@ -223,6 +237,8 @@ make_andalso([E | Es]) ->
 
 is_inline_metavar(Var) when is_atom(Var) ->
     is_erlang_var(atom_to_list(Var));
+is_inline_metavar(Var) when is_integer(Var) ->
+    Var > 9 andalso (Var rem 10) =:= 9;
 is_inline_metavar(_) -> false.
 
 is_erlang_var([C|_]) when C >= $A, C =< $Z ; C >= $À, C =< $Þ, C /= $× ->

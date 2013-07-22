@@ -1,36 +1,8 @@
 %% ---------------------------------------------------------------------
 %% @author Richard Carlsson <carlsson.richard@gmail.com>
-%% @copyright 2010-2012 Richard Carlsson
+%% @copyright 2010-2013 Richard Carlsson
 %% @doc Metaprogramming in Erlang.
 %%
-%% Merl makes it easy both to build new ASTs (abstract syntax trees) from
-%% scratch and to match and decompose existing ASTs.
-%%
-%% == Quick start ==
-%%
-%% To enable the full power of Merl, your module needs to include the Merl
-%% header file:
-%% ```-include_lib("merl/include/merl.hrl").'''
-%%
-%% Then, you can use the `?Q(Text)' and `?Q(Text, Map)' macros in your code
-%% to create ASTs or match on existing ASTs. For example:
-%%
-%% ```TupleAST = ?Q("{foo, 42}"),
-%%    ?Q("{foo, _@NumberAST}") = TupleAST,
-%%    ListAST = ?Q("_@NumberAST = element(2, _@TupleAST)")'''
-%%
-%% Calling `io:put_chars(erl_prettypr:format(ListAST))' will then print the
-%% following code:
-%%
-%% ```42 = element(2, {foo, 42})'''
-%%
-%% The `?Q' macros turn the quoted code fragments into ASTs, and lifts
-%% metavariables such as `_@TupleAST' and `_@NumberAST' to the level of your
-%% Erlang code, so you can use the corresponding Erlang variables `TupleAST'
-%% and `NumberAST' directly. This is the most straightforward way to use
-%% Merl, and in many cases it's all you need.
-
-%% (Note that the ?Q macros cannot be used in the Erlang shell.)
 
 %% TODO: document how variables match in guards, i.e., there's always an
 %% implicit disjunction-of-conjunctions, and the pattern "when _@@g ->" will
@@ -42,16 +14,13 @@
 
 -module(merl).
 
--export([term/1, var/1, set_pos/2, show/1]).
+-export([term/1, var/1, show/1]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
 -export([template/1, tree/1, subst/2, tsubst/2, match/2, switch/2]).
 
 -export([template_vars/1, meta_template/1]).
-
--export([init_module/1, module_forms/1, add_function/4, add_record/3,
-         add_import/3, add_attribute/3, set_file/2]).
 
 -export([compile/1, compile/2, compile_and_load/1, compile_and_load/2]).
 
@@ -73,30 +42,6 @@
 
 -type location() :: erl_scan:location().
 
-
-%% ------------------------------------------------------------------------
-%% Call indirections
-
-init_module(Name) ->
-    merl_build:init_module(Name).
-
-module_forms(Module) ->
-    merl_build:module_forms(Module).
-
-add_function(Exported, Name, Clauses, Module) ->
-    merl_build:add_function(Exported, Name, Clauses, Module).
-
-add_import(From, Names, Module) ->
-    merl_build:add_import(From, Names, Module).
-
-add_record(Name, Fs, Module) ->
-    merl_build:add_record(Name, Fs, Module).
-
-add_attribute(Name, Term, Module) ->
-    merl_build:add_attribute(Name, Term, Module).
-
-set_file(Filename, Module) ->
-    merl_build:set_file(Filename, Module).
 
 %% ------------------------------------------------------------------------
 %% Compiling and loading code directly to memory
@@ -157,14 +102,8 @@ term(Term) ->
     erl_syntax:abstract(Term).
 
 
-%% @doc Set the position information on all nodes in a syntax tree.
-%% @see erl_syntax:set_pos/2
-
-set_pos(Tree, Pos) ->
-    erl_syntax_lib:map(fun (T) -> set_pos(T,Pos) end, Tree).
-
-
-%% @doc Pretty-print a syntax tree or template to the standard output.
+%% @doc Pretty-print a syntax tree or template to the standard output. This
+%% is a utility function for interactive debugging.
 
 show(Ts) when is_list(Ts) ->
     lists:foreach(fun show/1, Ts);
@@ -193,6 +132,8 @@ qquote(Text, Env) ->
 %% @doc Parse text and substitute meta-variables. Takes an initial scanner
 %% starting position as first argument.
 %%
+%% The macro `?Q(Text, Env)' expands to `merl:qquote(?LINE, Text, Env)'.
+%%
 %% @see quote/2
 
 qquote(StartPos, Text, Env) ->
@@ -213,6 +154,8 @@ quote(Text) ->
 
 %% @doc Parse text. Takes an initial scanner starting position as first
 %% argument.
+%%
+%% The macro `?Q(Text)' expands to `merl:quote(?LINE, Text, Env)'.
 %%
 %% @see quote/1
 
@@ -356,7 +299,7 @@ template_0(Tree) ->
     case template_1(Tree) of
         false -> Tree;
         {Name} when is_list(Name) ->
-            fail("bad metavariable: '~s'", [Name]);
+            fail("bad metavariable: '~s'", [tl(Name)]);  % drop v/n from name
         Template -> Template
     end.
 
@@ -365,12 +308,13 @@ template_0(Tree) ->
 template_1(Tree) ->
     case subtrees(Tree) of
         [] ->
-            case check_meta(Tree) of
-                {"_"++Cs}=V when Cs =/= [] -> V;
-                {"0"++Cs}=V when Cs =/= [] -> V;
-                {"@"++Name} when Name =/= [] -> {'*',tag(Name)};
-                {"9"++Name} when Name =/= [] -> {'*',tag(Name)};
-                {Name} -> {tag(Name)};
+            case metavar(Tree) of
+                {"v_"++Cs}=V when Cs =/= [] -> V;  % to be lifted
+                {"n0"++Cs}=V when Cs =/= [] -> V;  % to be lifted
+                {"v@"++Cs} when Cs =/= [] -> {'*',list_to_atom(Cs)};
+                {"n9"++Cs} when Cs =/= [] -> {'*',list_to_integer(Cs)};
+                {"v"++Cs} -> {list_to_atom(Cs)};
+                {"n"++Cs} -> {list_to_integer(Cs)};
                 false -> false
             end;
         Gs ->
@@ -384,11 +328,12 @@ template_1(Tree) ->
 
 template_2([G | Gs], As, Bool) ->
     case template_3(G, [], false) of
-        {"_"++Cs}=V when Cs =/= [] -> V;  % lift further
-        {"0"++Cs}=V when Cs =/= [] -> V;  % lift further
-        {"@"++Name} when Name =/= [] -> {'*',tag(Name)};  % lifted to here
-        {"9"++Name} when Name =/= [] -> {'*',tag(Name)};  % lifted to here
-        {Name} when is_list(Name) -> {tag(Name)};  % lifted to here
+        {"v_"++Cs}=V when Cs =/= [] -> V;  % lift further
+        {"n0"++Cs}=V when Cs =/= [] -> V;  % lift further
+        {"v@"++Cs} when Cs =/= [] -> {'*',list_to_atom(Cs)};  % stop
+        {"n9"++Cs} when Cs =/= [] -> {'*',list_to_integer(Cs)};  % stop
+        {"v"++Cs} when is_list(Cs) -> {list_to_atom(Cs)};  % stop
+        {"n"++Cs} when is_list(Cs) -> {list_to_integer(Cs)};  % stop
         false -> template_2(Gs, [G | As], Bool);
         G1 -> template_2(Gs, [G1 | As], true)
     end;
@@ -397,8 +342,8 @@ template_2([], As, true) -> lists:reverse(As).
 
 template_3([T | Ts], As, Bool) ->
     case template_1(T) of
-        {"_"++Cs} when Cs =/= [] -> {Cs};  % lift
-        {"0"++Cs} when Cs =/= [] -> {Cs};  % lift
+        {"v_"++Cs} when Cs =/= [] -> {"v"++Cs};  % lift
+        {"n0"++Cs} when Cs =/= [] -> {"n"++Cs};  % lift
         false -> template_3(Ts, [T | As], Bool);
         T1 -> template_3(Ts, [T1 | As], true)
     end;
@@ -410,9 +355,9 @@ template_3([], As, true) -> lists:reverse(As).
 %% Meta-variables in the template are turned into normal Erlang variables if
 %% their names (after the metavariable prefix characters) begin with an
 %% uppercase character. E.g., `_@Foo' in the template becomes the variable
-%% `Foo' in the meta-template.
-
-%% TODO: line number info on all the generated code (file not part of pos!)
+%% `Foo' in the meta-template. Furthermore, variables ending with `@' are
+%% automatically wrapped in a call to merl:term/1, so e.g. `_@Foo@ in the
+%% template becomes `merl:term(Foo)' in the meta-template.
 
 meta_template(Templates) when is_list(Templates) ->
     [meta_template_1(T) || T <- Templates];
@@ -426,28 +371,47 @@ meta_template_1({template, Type, Attrs, Groups}) ->
        erl_syntax:abstract(Attrs),
        erl_syntax:list([erl_syntax:list([meta_template_1(T) || T <- G])
                         || G <- Groups])]);
-meta_template_1({Var}=V) when is_atom(Var) ->
+meta_template_1({Var}=V) ->
     meta_template_2(Var, V);
-meta_template_1({'*',Var}=V) when is_atom(Var) ->
+meta_template_1({'*',Var}=V) ->
     meta_template_2(Var, V);
 meta_template_1(Leaf) ->
     erl_syntax:abstract(Leaf).
 
-meta_template_2(Var, V) ->
+meta_template_2(Var, V) when is_atom(Var) ->
     case atom_to_list(Var) of
         [C|_]=Name when C >= $A, C =< $Z ; C >= $À, C =< $Þ, C /= $× ->
             case lists:reverse(Name) of
-                "@"++RevRealName ->
+                "@"++([_|_]=RevRealName) ->  % don't allow empty RealName
                     RealName = lists:reverse(RevRealName),
                     erl_syntax:application(erl_syntax:atom(merl),
                                            erl_syntax:atom(term),
                                            [erl_syntax:variable(RealName)]);
                 _ ->
+                    %% plain automatic metavariable
                     erl_syntax:variable(Name)
             end;
         _ ->
             erl_syntax:abstract(V)
+    end;
+meta_template_2(Var, V) when is_integer(Var) ->
+    if Var > 9, (Var rem 10) =:= 9 ->
+            %% at least 2 digits, ends in 9: make it a Q-variable
+            if Var > 99, (Var rem 100) =:= 99 ->
+                    %% at least 3 digits, ends in 99: wrap in merl:term/1
+                    Name = "Q" ++ integer_to_list(Var div 100),
+                    erl_syntax:application(erl_syntax:atom(merl),
+                                           erl_syntax:atom(term),
+                                           [erl_syntax:variable(Name)]);
+               true ->
+                    %% plain automatic Q-variable
+                    Name = integer_to_list(Var div 10),
+                    erl_syntax:variable("Q" ++ Name)
+            end;
+       true ->
+            erl_syntax:abstract(V)
     end.
+
 
 
 %% @doc Return an ordered list of the metavariables in the template.
@@ -765,49 +729,46 @@ flatten_text(Text) when is_binary(Text) ->
 flatten_text(Text) ->
     Text.
 
-%% convert a metavariable name string back to an integer or atom
-tag(Name) ->
-    try list_to_integer(Name)
-    catch
-        error:badarg ->
-            list_to_atom(Name)
-    end.
+-spec metavar(tree()) -> {string()} | false.
 
--spec check_meta(tree()) -> {string()} | false.
+%% Check if a syntax tree represents a metavariable. If not, 'false' is
+%% returned; otherwise, this returns a 1-tuple with a string containing the
+%% variable name including lift/glob prefixes but without any leading
+%% metavariable prefix, and instead prefixed with "v" for a variable or "i"
+%% for an integer.
+%%
+%% Metavariables are atoms starting with @, variables starting with _@,
+%% strings starting with "'@, or integers starting with 909. Following the
+%% prefix, one or more _ or 0 characters (unless it's the last character in
+%% the name) may be used to indicate "lifting" of the variable one or more
+%% levels , and after that, a @ or 9 character indicates a glob metavariable
+%% rather than a normal metavariable. If the name after the prefix is _ or
+%% 0, the variable is treated as an anonymous catch-all pattern in matches.
 
-%% Check if a syntax tree represents a metavariable. Metavariables are atoms
-%% starting with `@', variables starting with `_@', strings starting with
-%% ``"'@'', or integers starting with `909'. Following the prefix, one or
-%% more `_' or `0' characters may be used to indicate "lifting" of the
-%% variable one or more levels, and after that, a `@' or `9' character
-%% indicates a glob metavariable rather than a normal metavariable. If the
-%% name after the prefix is `_' or `0', the variable is treated as an
-%% anonymous catch-all pattern in matches.
-
-check_meta(Tree) ->
+metavar(Tree) ->
     case type(Tree) of
         atom ->
             case erl_syntax:atom_name(Tree) of
-                "@" ++ Cs when Cs =/= [] -> {Cs};
+                "@" ++ Cs when Cs =/= [] -> {"v"++Cs};
                 _ -> false
             end;
         variable ->
             case erl_syntax:variable_literal(Tree) of
-                "_@" ++ Cs when Cs =/= [] -> {Cs};
+                "_@" ++ Cs when Cs =/= [] -> {"v"++Cs};
                 _ -> false
             end;
         integer ->
             case erl_syntax:integer_value(Tree) of
                 N when N >= 9090 ->
                     case integer_to_list(N) of
-                        "909" ++ Cs -> {Cs};
+                        "909" ++ Cs -> {"n"++Cs};
                         _ -> false
                     end;
                 _ -> false
             end;
         string ->
             case erl_syntax:string_value(Tree) of
-                "'@" ++ Cs -> {Cs};
+                "'@" ++ Cs -> {"v"++Cs};
                 _ -> false
             end;
         _ ->
