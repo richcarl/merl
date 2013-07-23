@@ -4,17 +4,9 @@
 %% @doc Metaprogramming in Erlang.
 %%
 
-%% TODO: document how variables match in guards, i.e., there's always an
-%% implicit disjunction-of-conjunctions, and the pattern "when _@@g ->" will
-%% only match a single conjunction, "when _@_@g ->" will match a number of
-%% conjunctions (without the disjunction wrapper), and "when _@__g ->" will
-%% match a single explicit disjunction of conjunctions (there is never more
-%% than one), while finally "when _@__@g ->" will match any clause yielding
-%% [] if there is no guard and [Disjunction] if there is a guard.
-
 -module(merl).
 
--export([term/1, var/1, show/1]).
+-export([term/1, var/1, print/1, show/1]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
@@ -103,14 +95,57 @@ term(Term) ->
 
 
 %% @doc Pretty-print a syntax tree or template to the standard output. This
-%% is a utility function for interactive debugging.
+%% is a utility function for development and debugging.
+
+print(Ts) when is_list(Ts) ->
+    lists:foreach(fun print/1, Ts);
+print(T) ->
+    io:put_chars(erl_prettypr:format(tree(T))),
+    io:nl().
+
+%% @doc Print the structure of a syntax tree or template to the standard
+%% output. This is a utility function for development and debugging.
 
 show(Ts) when is_list(Ts) ->
     lists:foreach(fun show/1, Ts);
 show(T) ->
-    io:put_chars(erl_prettypr:format(tree(T))),
+    io:put_chars(pp(tree(T), 0)),
     io:nl().
 
+pp(T, I) ->
+    [lists:duplicate(I, $\s),
+     limit(lists:flatten([atom_to_list(type(T)), ": ",
+                          erl_prettypr:format(erl_syntax_lib:limit(T,3))]),
+           79-I),
+     $\n,
+     pp_1(lists:filter(fun (X) -> X =/= [] end, subtrees(T)), I+2)
+    ].
+
+pp_1([G], I) ->
+    pp_2(G, I);
+pp_1([G | Gs], I) ->
+    [pp_2(G, I), lists:duplicate(I, $\s), "+\n" | pp_1(Gs, I)];
+pp_1([], _I) ->
+    [].
+
+pp_2(G, I) ->
+    [pp(E, I) || E <- G].
+
+%% limit string to N characters, stay on a single line and compact whitespace
+limit([$\n | Cs], N) -> limit([$\s | Cs], N);
+limit([$\r | Cs], N) -> limit([$\s | Cs], N);
+limit([$\v | Cs], N) -> limit([$\s | Cs], N);
+limit([$\t | Cs], N) -> limit([$\s | Cs], N);
+limit([$\s, $\s | Cs], N) -> limit([$\s | Cs], N);
+limit([C | Cs], N) when C < 32 -> limit(Cs, N);
+limit([C | Cs], N) when N > 3 -> [C | limit(Cs, N-1)];
+limit([_C1, _C2, _C3, _C4 | _Cs], 3) -> "...";
+limit(Cs, 3) -> Cs;
+limit([_C1, _C2, _C3 | _], 2) -> "..";
+limit(Cs, 2) -> Cs;
+limit([_C1, _C2 | _], 1) -> ".";
+limit(Cs, 1) -> Cs;
+limit(_, _) -> [].
 
 %% ------------------------------------------------------------------------
 %% Parsing and instantiating code fragments

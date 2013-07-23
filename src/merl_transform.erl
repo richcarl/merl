@@ -1,8 +1,10 @@
 %% ---------------------------------------------------------------------
 %% @author Richard Carlsson <carlsson.richard@gmail.com>
 %% @copyright 2012 Richard Carlsson
-%% @doc Parse transform for merl. Evaluates calls to functions in `merl',
-%% turning strings to templates, etc., at compile-time.
+%% @doc Parse transform for merl. Enables the use of automatic metavariables
+%% and using quasi-quotes in matches and case switches. Also optimizes calls
+%% to functions in `merl' by partially evaluating them, turning strings to
+%% templates, etc., at compile-time.
 %%
 %% Using `-include_lib("merl/include/merl.hrl").' enables the transform,
 %% unless the macro `MERL_NO_TRANSFORM' is defined first.
@@ -219,7 +221,8 @@ pre_expand_case_clause(Body, Guard, Line, Text) ->
 %% generated code. (Expansions at the Erlang level can't be marked up as
 %% compiler generated to allow later compiler stages to ignore them.)
 dummy_uses(Vars) ->
-    [?Q("_ = _@var", [{var, erl_syntax:variable(V)}]) || V <- Vars].
+    [?Q("_ = _@var", [{var, erl_syntax:variable(var_name(V))}])
+     || V <- Vars].
 
 rewrite_guard([]) -> [];
 rewrite_guard([D]) -> [make_orelse(erl_syntax:disjunction_body(D))].

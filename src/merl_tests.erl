@@ -404,6 +404,26 @@ meta_case_test_() ->
                              ?Q("{fie, _@Bar, '@Baz'}") -> ?Q("{_@Bar, _@Baz}")
                          end
                      end)),
+     ?_assertEqual("{foo, 4}",
+                   f(begin
+                         Tree = ?Q("{foo, 3}"),
+                         case Tree of
+                             ?Q("{foo, _@N}") ->
+                                 N1 = erl_syntax:concrete(N) + 1,
+                                 ?Q("{foo, _@N1@}");
+                             _ -> Tree
+                         end
+                     end)),
+     ?_assertEqual("-export([f/4]).",
+                   f(begin
+                         Tree = ?Q("-export([f/3])."),
+                         case Tree of
+                             ?Q("-export([f/90919]).") ->
+                                 Q2 = erl_syntax:concrete(Q1) + 1,
+                                 ?Q("-export([f/909299]).");
+                             _ -> Tree
+                         end
+                     end)),
      ?_assertEqual("{1, [bar], baz()}",
                    f(begin
                          Tree = ?Q("{foo, [bar], baz()}"),
