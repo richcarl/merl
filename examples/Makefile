@@ -4,7 +4,7 @@ INCLUDES=../include
 HEADERS=$(INCLUDES)/merl.hrl
 OBJECTS=$(SOURCES:%.erl=%.beam)
 
-all: $(OBJECTS)
+all: $(OBJECTS) test
 
 %.beam: %.erl $(HEADERS) Makefile
 	erlc -pa ../ebin $(ERLC_FLAGS) -o ./ $<
@@ -14,3 +14,8 @@ lispc.beam basicc.beam: ../ebin/merl_transform.beam ../ebin/merl.beam
 
 clean:
 	-rm -f $(OBJECTS)
+
+test:
+	erl -noshell -pa ../ebin \
+	 -eval 'eunit:test([lisp, lispc, basic, basicc],[])' \
+	 -s init stop

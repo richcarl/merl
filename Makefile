@@ -22,6 +22,7 @@ priv/merl_transform.beam: src/merl_transform.erl $(HEADERS) Makefile
 clean:
 	-rm -f priv/merl_transform.beam
 	-rm -f $(OBJECTS)
+	(cd examples && make clean)
 
 test:
 	erl -noshell -pa ebin \
@@ -33,3 +34,7 @@ release: clean
 
 docs:
 	erl -pa ./ebin -noshell -eval "edoc:application(merl, \".\", [$(DOC_OPTS)])" -s init stop
+
+.PHONY: examples
+examples:
+	(cd examples && make)
