@@ -64,16 +64,16 @@ compile(Prog, ModName) ->
           {false, stop, [Stop]},
           {true, goto, [Goto]}
           | Fs0],
-    Forms = merl:module_forms(
+    Forms = merl_build:module_forms(
               lists:foldl(fun ({X, Name, Cs}, S) ->
-                                  merl:add_function(X, Name, Cs, S)
+                                  merl_build:add_function(X, Name, Cs, S)
                           end,
-                          merl:init_module(ModName),
+                          merl_build:init_module(ModName),
                           Fs)),
-    %% Write source to file for debugging
-    file:write_file(lists:concat([ModName, "_gen.erl"]),
-                    erl_prettypr:format(erl_syntax:form_list(Forms),
-                                        [{paper,160},{ribbon,80}])),
+    %% %% Write source to file for debugging
+    %% file:write_file(lists:concat([ModName, "_gen.erl"]),
+    %%                 erl_prettypr:format(erl_syntax:form_list(Forms),
+    %%                                     [{paper,160},{ribbon,80}])),
     merl:compile_and_load(Forms, [verbose]).
 
 label(L) ->

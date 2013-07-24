@@ -31,13 +31,13 @@ compile(Lisp, ModName) ->
                "           (fun (X) -> F(fun (Y) -> (X(X))(Y) end) end)",
                "     end,",
                "  _@Code"]),
-    Forms = merl:module_forms(
-              merl:add_function(true, eval, [Main],
-                                merl:init_module(ModName))),
-    %% Write source to file for debugging
-    file:write_file(lists:concat([ModName, "_gen.erl"]),
-                    erl_prettypr:format(erl_syntax:form_list(Forms),
-                                        [{paper,160},{ribbon,80}])),
+    Forms = merl_build:module_forms(
+              merl_build:add_function(true, eval, [Main],
+                                      merl_build:init_module(ModName))),
+    %% %% Write source to file for debugging
+    %% file:write_file(lists:concat([ModName, "_gen.erl"]),
+    %%                 erl_prettypr:format(erl_syntax:form_list(Forms),
+    %%                                     [{paper,160},{ribbon,80}])),
     merl:compile_and_load(Forms, [verbose]).
 
 var(Atom) ->
