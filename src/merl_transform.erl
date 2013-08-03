@@ -20,6 +20,8 @@
 
 %% TODO: unroll calls to switch? it will probably get messy
 
+%% TODO: use Igor to make resulting code independent of merl at runtime?
+
 parse_transform(Forms, _Options) ->
     erl_syntax:revert_forms(expand(erl_syntax:form_list(Forms))).
 
