@@ -22,9 +22,13 @@
 
 -type tree() :: erl_syntax:syntaxTree().
 
+-type tree_or_trees() :: tree() | [tree()].
+
 -type pattern() :: tree() | template().
 
--type env() :: [{Key::id(), pattern() | [pattern()]}].
+-type pattern_or_patterns() :: pattern() | [pattern()].
+
+-type env() :: [{Key::id(), pattern_or_patterns()}].
 
 -type id() :: atom() | integer().
 
@@ -151,7 +155,7 @@ limit(_, _) -> [].
 %% Parsing and instantiating code fragments
 
 
--spec qquote(Text::text(), Env::env()) -> tree() | [tree()].
+-spec qquote(Text::text(), Env::env()) -> tree_or_trees().
 
 %% @doc Parse text and substitute meta-variables.
 %%
@@ -161,8 +165,7 @@ qquote(Text, Env) ->
     qquote(1, Text, Env).
 
 
--spec qquote(StartPos::location(), Text::text(), Env::env()) ->
-                    tree() | [tree()].
+-spec qquote(StartPos::location(), Text::text(), Env::env()) -> tree_or_trees().
 
 %% @doc Parse text and substitute meta-variables. Takes an initial scanner
 %% starting position as first argument.
@@ -175,7 +178,7 @@ qquote(StartPos, Text, Env) ->
     subst(quote(StartPos, Text), Env).
 
 
--spec quote(Text::text()) -> [tree()].
+-spec quote(Text::text()) -> tree_or_trees().
 
 %% @doc Parse text.
 %%
@@ -185,7 +188,7 @@ quote(Text) ->
     quote(1, Text).
 
 
--spec quote(StartPos::location(), Text::text()) -> tree() | [tree()].
+-spec quote(StartPos::location(), Text::text()) -> tree_or_trees().
 
 %% @doc Parse text. Takes an initial scanner starting position as first
 %% argument.
@@ -295,17 +298,6 @@ parse_error(R) ->
 %% ------------------------------------------------------------------------
 %% Templates, substitution and matching
 
--spec template(pattern() | [pattern()]) -> template() | [template()].
-
-%% @doc Turn a syntax tree or list of trees into a template or templates.
-%% Templates can be instantiated or matched against, and reverted back to
-%% normal syntax trees using {@link tree/1}. If the input is already a
-%% template, it is not modified further.
-%%
-%% @see subst/2
-%% @see match/2
-%% @see tree/1
-
 %% Leaves are normal syntax trees, and inner nodes are tuples
 %% {template,Type,Attrs,Groups} where Groups are lists of lists of nodes.
 %% Metavariables are 1-tuples {VarName}, where VarName is an atom or an
@@ -321,6 +313,19 @@ parse_error(R) ->
                     | {id()}
                     | {'*',id()}
                     | {template, atom(), term(), [[template()]]}.
+
+-type template_or_templates() :: template() | [template()].
+
+-spec template(pattern_or_patterns()) -> template_or_templates().
+
+%% @doc Turn a syntax tree or list of trees into a template or templates.
+%% Templates can be instantiated or matched against, and reverted back to
+%% normal syntax trees using {@link tree/1}. If the input is already a
+%% template, it is not modified further.
+%%
+%% @see subst/2
+%% @see match/2
+%% @see tree/1
 
 template(Trees) when is_list(Trees) ->
     [template_0(T) || T <- Trees];
@@ -470,7 +475,7 @@ template_vars_1(_, Vars) ->
     Vars.
 
 
--spec tree(template() | [template()]) -> tree() | [tree()].
+-spec tree(template_or_templates()) -> tree_or_trees().
 
 %% @doc Revert a template to a normal syntax tree. Any remaining
 %% metavariables are turned into `@'-prefixed atoms or `909'-prefixed
@@ -498,7 +503,7 @@ tree_1(Leaf) ->
     Leaf.  % any syntax tree, not necessarily atomic (due to substitutions)
 
 
--spec subst(pattern() | [pattern()], env()) -> tree() | [tree()].
+-spec subst(pattern_or_patterns(), env()) -> tree_or_trees().
 
 %% @doc Substitute metavariables in a pattern or list of patterns, yielding
 %% a syntax tree or list of trees as result. Both for normal metavariables
@@ -516,7 +521,7 @@ subst_0(Tree, Env) ->
     tree_1(subst_1(template(Tree), Env)).
 
 
--spec tsubst(pattern() | [pattern()], env()) -> template() | [template()].
+-spec tsubst(pattern_or_patterns(), env()) -> template_or_templates().
 
 %% @doc Like subst/2, but does not convert the result from a template back
 %% to a tree. Useful if you want to do multiple separate substitutions.
@@ -545,7 +550,7 @@ subst_1(Leaf, _Env) ->
     Leaf.
 
 
--spec match(pattern() | [pattern()], tree() | [tree()]) ->
+-spec match(pattern_or_patterns(), tree_or_trees()) ->
                    {ok, env()} | error.
 
 %% @doc Match a pattern against a syntax tree (or patterns against syntax
@@ -694,55 +699,62 @@ compare_leaves(Type, T1, T2) ->
     end.
 
 
-%% @doc Match against multiple guarded clauses.
+%% @doc Match against one or more clauses with patterns and optional guards.
+%%
+%% Note that clauses following a default action will be ignored.
+%%
 %% @see match/2
 
--type guard() :: fun( (env()) -> boolean() ).
+-type switch_clause() ::
+          {pattern_or_patterns(), guarded_actions()}
+        | {pattern_or_patterns(), guard_test(), switch_action()}
+        | default_action().
 
--type body() :: fun( (env()) -> any() ).
+-type guarded_actions() :: guarded_action() | [guarded_action()].
 
--type guarded_body() :: body() | {guard(), body()}.
+-type guarded_action() :: switch_action() | {guard_test(), switch_action()}.
 
--type default() :: fun( () -> any() ).
+-type switch_action() :: fun( (env()) -> any() ).
 
--type clause() :: {pattern()|[pattern()], guard(), body()}
-                | {pattern()|[pattern()], guarded_body()|[guarded_body()]}
-                | default().
+-type guard_test() :: fun( (env()) -> boolean() ).
 
--spec switch(tree() | [tree()], [clause()]) -> any().
+-type default_action() :: fun( () -> any() ).
 
-switch(Tree, [{Pattern, Body} | Cs]) ->
-    switch_1(Tree, Pattern, Body, Cs);
-switch(Tree, [{Pattern, Guard, Body} | Cs]) ->
-    switch_1(Tree, Pattern, {Guard, Body}, Cs);
-switch(_Tree, [Default | _Cs]) when is_function(Default, 0) ->
+
+-spec switch(tree_or_trees(), [switch_clause()]) -> any().
+
+switch(Trees, [{Patterns, GuardedActions} | Cs]) when is_list(GuardedActions) ->
+    switch_1(Trees, Patterns, GuardedActions, Cs);
+switch(Trees, [{Patterns, GuardedAction} | Cs]) ->
+    switch_1(Trees, Patterns, [GuardedAction], Cs);
+switch(Trees, [{Patterns, Guard, Action} | Cs]) ->
+    switch_1(Trees, Patterns, [{Guard, Action}], Cs);
+switch(_Trees, [Default | _Cs]) when is_function(Default, 0) ->
     Default();
-switch(_Tree, []) ->
+switch(_Trees, []) ->
     erlang:error(merl_switch_clause);
 switch(_Tree, _) ->
     erlang:error(merl_switch_badarg).
 
-switch_1(Tree, Pattern, Body, Cs) ->
-    case match(Pattern, Tree) of
-        {ok, Env} when is_list(Body) ->
-            switch_2(Env, Body, Tree, Cs);
+switch_1(Trees, Patterns, GuardedActions, Cs) ->
+    case match(Patterns, Trees) of
         {ok, Env} ->
-            switch_2(Env, [Body], Tree, Cs);
+            switch_2(Env, GuardedActions, Trees, Cs);
         error ->
-            switch(Tree, Cs)
+            switch(Trees, Cs)
     end.
 
-switch_2(Env, [{Guard, Body} | Bs], Tree, Cs)
-  when is_function(Guard, 1), is_function(Body, 1) ->
+switch_2(Env, [{Guard, Action} | Bs], Trees, Cs)
+  when is_function(Guard, 1), is_function(Action, 1) ->
     case Guard(Env) of
-        true -> Body(Env);
-        false -> switch_2(Env, Bs, Tree, Cs)
+        true -> Action(Env);
+        false -> switch_2(Env, Bs, Trees, Cs)
     end;
-switch_2(Env, [Body | _Bs], _Tree, _Cs) when is_function(Body, 1) ->
-    Body(Env);
-switch_2(_Env, [], Tree, Cs) ->
-    switch(Tree, Cs);
-switch_2(_Env, _, _Tree, _Cs) ->
+switch_2(Env, [Action | _Bs], _Trees, _Cs) when is_function(Action, 1) ->
+    Action(Env);
+switch_2(_Env, [], Trees, Cs) ->
+    switch(Trees, Cs);
+switch_2(_Env, _, _Trees, _Cs) ->
     erlang:error(merl_switch_badarg).
 
 
