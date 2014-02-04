@@ -18,8 +18,6 @@
 
 %% NOTE: this module may not include merl.hrl!
 
-%% TODO: work in ideas from smerl to make an almost-drop-in replacement
-
 -type tree() :: erl_syntax:syntaxTree().
 
 -type tree_or_trees() :: tree() | [tree()].
