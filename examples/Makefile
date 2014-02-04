@@ -1,5 +1,5 @@
 ERLC_FLAGS=+debug_info
-SOURCES=lisp.erl lispc.erl basic.erl basicc.erl
+SOURCES=merl_build.erl lisp.erl lispc.erl basic.erl basicc.erl
 INCLUDES=../include
 HEADERS=$(INCLUDES)/merl.hrl
 OBJECTS=$(SOURCES:%.erl=%.beam)
