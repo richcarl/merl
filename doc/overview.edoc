@@ -6,7 +6,7 @@
   must be written `@@@@' and `@}' must be written `@@}'
 
 @author Richard Carlsson <carlsson.richard@gmail.com>
-@copyright 2010-2013 Richard Carlsson
+@copyright 2010-2014 Richard Carlsson
 @title Merl - Metaprograming in Erlang
 
 @doc Merl is a more user friendly interface to the `erl_syntax' module in
