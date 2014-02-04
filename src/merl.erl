@@ -316,10 +316,10 @@ parse_error(R) ->
 %% syntax trees are free from metavariables, so pattern() :: tree() |
 %% template() is in fact a wider type than template().
 
--opaque template() :: tree()
-                    | {id()}
-                    | {'*',id()}
-                    | {template, atom(), term(), [[template()]]}.
+-type template() :: tree()
+                  | {id()}
+                  | {'*',id()}
+                  | {template, atom(), term(), [[template()]]}.
 
 -type template_or_templates() :: template() | [template()].
 
