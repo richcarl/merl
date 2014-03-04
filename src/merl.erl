@@ -921,6 +921,7 @@ merge_comments(StartLine, Comments, Ts) ->
     merge_comments(StartLine, Comments, Ts, []).
 
 merge_comments(_StartLine, [], [], [T]) -> T;
+merge_comments(_StartLine, [], [T], []) -> T;
 merge_comments(_StartLine, [], Ts, Acc) ->
     lists:reverse(Acc, Ts);
 merge_comments(StartLine, Cs, [], Acc) ->
