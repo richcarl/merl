@@ -124,6 +124,19 @@ quote_case_clause_test_() ->
                          "{X, Y} when X > Y -> 1;"
                          "_ -> 0"])))].
 
+quote_comment_test_() ->
+    [?_assertEqual("%% comment preserved\n"
+                   "{foo, 42}",
+                  f(?Q(["%% comment preserved",
+                        "{foo, 42}"]))),
+     ?_assertEqual("{foo, 42}"
+                   "%% comment preserved\n",
+                   f(?Q(["{foo, 42}",
+                         "%% comment preserved"]))),
+     ?_assertEqual("  % just a comment (with indent)\n",
+                  f(?Q("  % just a comment (with indent)")))
+    ].
+
 metavar_test_() ->
     [?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("'@foo'"))))),
      ?_assertEqual("'@foo'", f(merl:tree(merl:template(?Q("_@foo"))))),
