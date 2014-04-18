@@ -536,7 +536,7 @@ subst_0(Tree, Env) ->
 %% @doc Like subst/2, but does not convert the result from a template back
 %% to a tree. Useful if you want to do multiple separate substitutions.
 %% @see subst/2
-%% @see tree/2subst
+%% @see tree/2
 
 tsubst(Trees, Env) when is_list(Trees) ->
     [subst_1(template(T), Env) || T <- Trees];
