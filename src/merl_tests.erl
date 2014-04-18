@@ -521,6 +521,18 @@ meta_case_test_() ->
                                  ?Q("{3, _@Baz}");
                              _ -> Tree
                          end
+                    end)),
+     ?_assertEqual("{2, foo, Bar, Baz, Bar(), Baz()}",
+                   f(begin
+                         Tree = ?Q("foo(Bar, Baz) -> Bar(), Baz()."),
+                         case Tree of
+                             ?Q("'@Func'(_@Args) -> _@Body.") ->
+                                 ?Q("{1, _@Func, _@Args, _@Body}");
+                             ?Q("'@Func'(_@@Args) -> _@@Body.") ->
+                                 ?Q("{2, _@Func, _@Args, _@Body}");
+                             ?Q("'@Func'(_@Args, Baz) -> _@Body1, _@Body2.") ->
+                                 ?Q("{3, _@Func, _@Args, _@Body1, _@Body2}")
+                         end
                      end))
     ].
 

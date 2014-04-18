@@ -164,7 +164,7 @@ rewrite_pattern(Line, Text) ->
     %% and then use real matching to bind the Erlang-level variables
     T0 = merl:template(merl:quote(Line, Text)),
     Vars = [V || V <- merl:template_vars(T0), is_inline_metavar(V)],
-    {merl:tsubst(T0, [{V, {var_to_tag(V)}} || V <- Vars]),
+    {merl:alpha(T0, [{V, var_to_tag(V)} || V <- Vars]),
      erl_syntax:list([erl_syntax:tuple([erl_syntax:abstract(var_to_tag(V)),
                                         erl_syntax:variable(var_name(V))])
                       || V <- Vars]),

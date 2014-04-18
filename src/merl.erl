@@ -19,7 +19,7 @@
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
 
--export([template/1, tree/1, subst/2, tsubst/2, match/2, switch/2]).
+-export([template/1, tree/1, subst/2, tsubst/2, alpha/2, match/2, switch/2]).
 
 -export([template_vars/1, meta_template/1]).
 
@@ -404,6 +404,8 @@ template_3([], As, true) -> lists:reverse(As).
 %% automatically wrapped in a call to merl:term/1, so e.g. `_@Foo@ in the
 %% template becomes `merl:term(Foo)' in the meta-template.
 
+-spec meta_template(template_or_templates()) -> tree_or_trees().
+
 meta_template(Templates) when is_list(Templates) ->
     [meta_template_1(T) || T <- Templates];
 meta_template(Template) ->
@@ -458,6 +460,8 @@ meta_template_2(Var, V) when is_integer(Var) ->
     end.
 
 
+
+-spec template_vars(template_or_templates()) -> [id()].
 
 %% @doc Return an ordered list of the metavariables in the template.
 
@@ -531,7 +535,7 @@ subst_0(Tree, Env) ->
 %% @doc Like subst/2, but does not convert the result from a template back
 %% to a tree. Useful if you want to do multiple separate substitutions.
 %% @see subst/2
-%% @see tree/2
+%% @see tree/2subst
 
 tsubst(Trees, Env) when is_list(Trees) ->
     [subst_1(template(T), Env) || T <- Trees];
@@ -552,6 +556,34 @@ subst_1({'*',Var}=V, Env) ->
         false -> V
     end;
 subst_1(Leaf, _Env) ->
+    Leaf.
+
+
+-spec alpha(pattern_or_patterns(), [{id(), id()}]) -> template_or_templates().
+
+%% @doc Alpha converts a pattern (renames variables). Similar to tsubst/1,
+%% but only renames variables (including globs).
+%% @see tsubst/2
+
+alpha(Trees, Env) when is_list(Trees) ->
+    [alpha_1(template(T), Env) || T <- Trees];
+alpha(Tree, Env) ->
+    alpha_1(template(Tree), Env).
+
+alpha_1({template, Type, Attrs, Groups}, Env) ->
+    Gs1 = [lists:flatten([alpha_1(T, Env) || T <- G]) || G <- Groups],
+    {template, Type, Attrs, Gs1};
+alpha_1({Var}=V, Env) ->
+    case lists:keyfind(Var, 1, Env) of
+        {Var, NewVar} -> {NewVar};
+        false -> V
+    end;
+alpha_1({'*',Var}=V, Env) ->
+    case lists:keyfind(Var, 1, Env) of
+        {Var, NewVar} -> {'*',NewVar};
+        false -> V
+    end;
+alpha_1(Leaf, _Env) ->
     Leaf.
 
 
