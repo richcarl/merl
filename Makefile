@@ -1,12 +1,14 @@
 # simple Makefile
-VSN=0.9
+VSN=0.9.0
 ERLC_FLAGS=
 SOURCES=$(wildcard src/*.erl)
 HEADERS=$(wildcard include/*.hrl)
 OBJECTS=$(SOURCES:src/%.erl=ebin/%.beam)
 DOC_OPTS={def,{version,\"$(VSN)\"}}
 
-all: $(OBJECTS) test
+.PHONY: all
+all: $(OBJECTS)
+
 ebin/%.beam: src/%.erl $(HEADERS) Makefile
 	erlc -pz ./priv -pa ./ebin $(ERLC_FLAGS) -o ebin/ $<
 
@@ -19,19 +21,23 @@ ebin/merl_transform.beam: ebin/merl.beam priv/merl_transform.beam
 priv/merl_transform.beam: src/merl_transform.erl $(HEADERS) Makefile
 	erlc -DMERL_NO_TRANSFORM $(ERLC_FLAGS) -o priv/ $<
 
+.PHONY: clean
 clean:
 	-rm -f priv/merl_transform.beam
 	-rm -f $(OBJECTS)
 	(cd examples && make clean)
 
+.PHONY: test
 test:
 	erl -noshell -pa ebin \
 	 -eval 'eunit:test("ebin",[])' \
 	 -s init stop
 
+.PHONY: release
 release: clean
 	$(MAKE) ERLC_FLAGS="$(ERLC_FLAGS) -DNOTEST"
 
+.PHONY: docs
 docs:
 	erl -pa ./ebin -noshell -eval "edoc:application(merl, \".\", [$(DOC_OPTS)])" -s init stop
 
