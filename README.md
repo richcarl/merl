@@ -1,6 +1,8 @@
 Merl - Metaprograming in Erlang
 ===============================
 
+*NOTE: as of Erlang/OTP 18.0, Merl is included in the syntax_tools application! This repository remains here for use by those unable to upgrade to version 18.0 or later.*
+
 Merl is a more user friendly interface to the `erl_syntax` module in the
 standard library `syntax_tools` application, making it easy both to build
 new ASTs (abstract syntax trees) from scratch and to match and decompose
